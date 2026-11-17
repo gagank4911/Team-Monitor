@@ -1,0 +1,1765 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Team Desk</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: sticky top bar with tabs, then one 1160px working column; each tab is a grid of cards (two columns on desktop, one on phones). */
+:root{
+  --bg:#F2F5F5; --surface:#FFFFFF; --sunk:#E8EEED; --line:#D5DEDD; --fg:#132221; --muted:#556866; --faint:#879896;
+  --accent:#0B6E68; --accent-hover:#085A55; --on-accent:#FFFFFF; --accent-soft:#D8EDEA;
+  --office:#1D7A3D; --office-soft:#DBF0E1;
+  --wfh:#2C5DB2; --wfh-soft:#DEE7F7;
+  --leave:#9C5508; --leave-soft:#FAE8D0;
+  --danger:#B3261E; --danger-soft:#FADEDB;
+  --idle:#7A8B8A; --idle-soft:#E6ECEB;
+  --shadow:0 1px 2px rgba(15,40,38,.05),0 6px 18px rgba(15,40,38,.05);
+  --font-ui:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0D1514; --surface:#141F1E; --sunk:#1A2726; --line:#283937; --fg:#E2EDEC; --muted:#9BAFAD; --faint:#6C817F;
+  --accent:#40B7AB; --accent-hover:#5FCBC0; --on-accent:#04201D; --accent-soft:#15322E;
+  --office:#5DCB80; --office-soft:#15301E;
+  --wfh:#82A8F1; --wfh-soft:#19253E;
+  --leave:#EFA352; --leave-soft:#37260F;
+  --danger:#F0897F; --danger-soft:#3A1815;
+  --idle:#8A9C9A; --idle-soft:#1E2A29;
+  --shadow:0 1px 2px rgba(0,0,0,.3);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0D1514; --surface:#141F1E; --sunk:#1A2726; --line:#283937; --fg:#E2EDEC; --muted:#9BAFAD; --faint:#6C817F;
+  --accent:#40B7AB; --accent-hover:#5FCBC0; --on-accent:#04201D; --accent-soft:#15322E;
+  --office:#5DCB80; --office-soft:#15301E;
+  --wfh:#82A8F1; --wfh-soft:#19253E;
+  --leave:#EFA352; --leave-soft:#37260F;
+  --danger:#F0897F; --danger-soft:#3A1815;
+  --idle:#8A9C9A; --idle-soft:#1E2A29;
+  --shadow:0 1px 2px rgba(0,0,0,.3);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);font-size:14px;line-height:1.45}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.faint{color:var(--faint)}
+h1,h2,h3{margin:0;text-wrap:balance}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* top bar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-bottom:1px solid var(--line)}
+.top-inner{max-width:1160px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px 0;display:flex;flex-direction:column;gap:10px}
+.brand-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:10px;margin-right:auto;min-width:0}
+.brand h1{font-size:19px;font-weight:700;letter-spacing:-.01em}
+.brand .date{color:var(--muted);font-size:13px}
+.me{display:flex;align-items:center;gap:8px;font-weight:600;min-width:0}
+.me span.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px}
+.role{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+.tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;margin:0 -4px}
+.tabs::-webkit-scrollbar{display:none}
+.tabs a{flex:none;text-decoration:none;color:var(--muted);font-weight:600;padding:9px 12px 11px;border-bottom:2px solid transparent;border-radius:6px 6px 0 0}
+.tabs a:hover{color:var(--fg);background:var(--sunk)}
+.tabs a[aria-current="page"]{color:var(--accent);border-bottom-color:var(--accent)}
+.tabs .count{display:inline-block;min-width:18px;margin-left:6px;padding:0 5px;border-radius:999px;background:var(--leave);color:var(--surface);font-size:11px;text-align:center;line-height:18px}
+
+/* page */
+.wrap{max-width:1160px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:18px 56px;display:flex;flex-direction:column;gap:16px}
+.banner{border:1px solid var(--line);background:var(--sunk);border-radius:10px;padding:10px 14px;color:var(--fg)}
+.banner.warn{background:var(--leave-soft);border-color:transparent}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.65fr);gap:16px;align-items:start}
+.grid.even{grid-template-columns:repeat(2,minmax(0,1fr))}
+.stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+@media (max-width:880px){.grid,.grid.even{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);min-width:0}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.card-head h2{font-size:15px;font-weight:650}
+.card-head .sub{color:var(--muted);font-size:13px}
+.empty{color:var(--muted);padding:14px 0;text-align:left}
+.view[hidden]{display:none!important}
+body:not(.is-admin) .admin-only{display:none!important}
+
+/* controls */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:600;border-radius:8px;padding:7px 13px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--sunk)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.primary:hover{background:var(--accent-hover)}
+.btn.big{padding:12px 24px;font-size:15px;border-radius:10px}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn.ghost:hover{color:var(--fg);background:var(--sunk)}
+.btn.small{padding:4px 9px;font-size:12.5px;border-radius:7px}
+.btn.ok{color:var(--office);border-color:var(--office)}
+.btn.no{color:var(--danger);border-color:var(--danger)}
+.btn.armed{background:var(--danger);border-color:var(--danger);color:var(--surface)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+input,select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+textarea{resize:vertical}
+input:disabled,select:disabled,textarea:disabled{background:var(--sunk);color:var(--muted)}
+fieldset{border:0;margin:0;padding:0;min-width:0}
+form .fs{display:flex;flex-direction:column;gap:12px}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field>span{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.field em{font-style:normal;text-transform:none;letter-spacing:0;font-weight:400}
+.row2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:520px){.row3{grid-template-columns:minmax(0,1fr)}}
+.check{display:flex;align-items:center;gap:8px;cursor:pointer}
+.check input{width:auto}
+.form-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.seg{display:inline-flex;background:var(--sunk);border-radius:9px;padding:3px;gap:2px}
+.seg button{border:0;background:transparent;padding:6px 12px;border-radius:7px;font-weight:600;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
+
+/* chips */
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--idle-soft);color:var(--idle);white-space:nowrap}
+.chip::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.chip.nodot::before{display:none}
+.chip.office{background:var(--office-soft);color:var(--office)}
+.chip.wfh{background:var(--wfh-soft);color:var(--wfh)}
+.chip.leave{background:var(--leave-soft);color:var(--leave)}
+.chip.danger{background:var(--danger-soft);color:var(--danger)}
+.chip.accent{background:var(--accent-soft);color:var(--accent)}
+.chip.pending{background:transparent;box-shadow:inset 0 0 0 1px currentColor}
+
+/* avatar */
+.av{border-radius:50%;flex:none;object-fit:cover;background:var(--sunk);display:inline-block;vertical-align:middle}
+.who{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600}
+.who .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nm-ini{display:none;font-weight:700;letter-spacing:.04em}
+@media (max-width:600px){.nm-full{display:none}.nm-ini{display:inline}}
+.dn-input{width:100%;min-width:130px;padding:5px 8px}
+.bar{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+.bar i{display:block;height:8px;border-radius:4px;background:var(--accent);min-width:2px}
+.rate.good{color:var(--office)}.rate.mid{color:var(--leave)}.rate.low{color:var(--danger)}
+
+/* punch card */
+.punch{display:flex;flex-direction:column;gap:14px}
+.punch .hello{font-size:20px;font-weight:650;letter-spacing:-.01em}
+.clock{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:34px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.clock small{font-size:15px;color:var(--muted);font-weight:500;margin-left:6px;letter-spacing:0}
+.punch-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.note{background:var(--sunk);border-radius:8px;padding:9px 12px;font-size:13px}
+.note.warn{background:var(--leave-soft);color:var(--fg)}
+.fixrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.fixrow input{width:auto}
+
+/* team today */
+.tally{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.trow{display:grid;grid-template-columns:minmax(120px,1.1fr) 150px minmax(120px,2fr) 150px;gap:12px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+.trow.head{border-top:0;padding:0 0 4px;font-size:11px;color:var(--faint)}
+.trow .times{font-size:12.5px;color:var(--muted);text-align:right}
+.tl{position:relative;height:10px;background:var(--sunk);border-radius:5px}
+.tl .span{position:absolute;top:0;bottom:0;border-radius:5px;background:var(--office);min-width:4px}
+.tl .span.wfh{background:var(--wfh)}
+.tl .span.open{opacity:.75}
+.tl .now{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--danger);border-radius:1px}
+.ticks{position:relative;height:14px}
+.ticks span{position:absolute;transform:translateX(-50%);font-family:var(--font-mono)}
+@media (max-width:760px){
+  .trow{grid-template-columns:minmax(0,1fr) auto;row-gap:6px}
+  .trow .tl{grid-column:1 / -1}
+  .trow .times{grid-column:1 / -1;text-align:left}
+  .trow.head{display:none}
+}
+
+/* lists */
+.list{display:flex;flex-direction:column}
+.item{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line)}
+.item:first-child{border-top:0}
+.item .main{min-width:0;display:flex;flex-direction:column;gap:3px}
+.item .title{font-weight:600;overflow-wrap:anywhere}
+.item .meta{color:var(--muted);font-size:12.5px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.item .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:none}
+
+/* balance */
+.bal{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.bal div{background:var(--sunk);border-radius:8px;padding:8px 10px}
+.bal b{display:block;font-family:var(--font-mono);font-size:20px;font-variant-numeric:tabular-nums}
+.bal span{font-size:12px;color:var(--muted)}
+@media (max-width:420px){.bal{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* month calendar (manager landing view) */
+.cal-layout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;align-items:start}
+@media (max-width:1040px){.cal-layout{grid-template-columns:minmax(0,1fr)}}
+.cal-scroll{overflow-x:auto}
+.bigcal{display:grid;grid-template-columns:repeat(7,minmax(92px,1fr));gap:6px;min-width:680px}
+.bigcal .dow{font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;padding:0 6px 2px}
+.bigcal .day{min-height:108px;border:1px solid var(--line);border-radius:10px;padding:6px 7px;display:flex;flex-direction:column;gap:4px;min-width:0;background:var(--surface)}
+.bigcal .day.blank{border:0;background:transparent}
+.bigcal .day.wk{background:var(--sunk)}
+.bigcal .day.past{opacity:.5}
+.bigcal .day.today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.bigcal .day.over{border-color:var(--danger);box-shadow:inset 0 0 0 1px var(--danger)}
+.bigcal .dhead{display:flex;justify-content:space-between;align-items:center;gap:4px}
+.bigcal .dn{font-family:var(--font-mono);font-size:13px;font-weight:600}
+.bigcal .rota{font-size:11px;color:var(--accent);font-weight:600;overflow-wrap:anywhere;line-height:1.3}
+.bigcal .day.today .dn{color:var(--accent)}
+.cnt{font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap}
+.over .cnt,.cnt.over{color:var(--danger)}
+.cchip{font-size:11.5px;font-weight:600;padding:2px 6px;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cchip.leave{background:var(--leave-soft);color:var(--leave)}
+.cchip.wfh{background:var(--wfh-soft);color:var(--wfh)}
+.cchip.pending{background:transparent;box-shadow:inset 0 0 0 1px currentColor}
+.cchip.flag{background:var(--danger);color:var(--surface)}
+.cchip.flag.pending{background:var(--danger-soft);color:var(--danger);box-shadow:inset 0 0 0 1px var(--danger)}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:12px}
+.cal-stats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.agenda .ad{padding:10px 0;border-top:1px solid var(--line)}
+.agenda .ad:first-child{border-top:0;padding-top:0}
+.agenda .adate{font-weight:650;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.agenda .rel{font-weight:500;color:var(--muted);font-size:12px;margin-left:6px}
+.agenda .ppl{display:flex;flex-direction:column;gap:6px;margin-top:7px}
+.agenda .p{display:flex;align-items:center;gap:8px;justify-content:space-between;min-width:0}
+.note.danger{background:var(--danger-soft);color:var(--fg)}
+.note.danger b{color:var(--danger)}
+.item.flagged .title{color:var(--danger)}
+
+/* board */
+.board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start}
+@media (max-width:820px){.board{grid-template-columns:minmax(0,1fr)}}
+.col{background:var(--sunk);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.col h3{font-size:13px;font-weight:650;display:flex;justify-content:space-between;padding:2px 4px}
+.col h3 .n{font-family:var(--font-mono);color:var(--muted)}
+.tcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:7px}
+.tcard.p-high{border-left:3px solid var(--danger)}
+.tcard .title{font-weight:600;overflow-wrap:anywhere}
+.tcard.done .title{text-decoration:line-through;color:var(--muted)}
+.tcard .notes{font-size:12.5px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
+.tcard .meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted)}
+.tcard .acts{display:flex;gap:6px;flex-wrap:wrap}
+.filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.filters select{width:auto}
+
+/* tables */
+.table-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:560px}
+th,td{text-align:left;padding:8px 10px;border-top:1px solid var(--line);vertical-align:middle}
+th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);border-top:0}
+td.num,th.num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+tr.wk td{color:var(--faint)}
+tr.short td.num.hrs{color:var(--leave)}
+.sumrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px}
+.sumrow div{background:var(--sunk);border-radius:8px;padding:8px 10px}
+.sumrow b{display:block;font-family:var(--font-mono);font-size:18px;font-variant-numeric:tabular-nums}
+.sumrow span{font-size:12px;color:var(--muted)}
+@media (max-width:520px){.sumrow{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* search */
+.results{display:flex;flex-direction:column;margin-top:6px}
+.results .item{padding:8px 0}
+
+.toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(20px);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;max-width:calc(100% - 32px);z-index:20}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{background:var(--danger);color:#fff}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+/* sign-in, bonding, extra columns */
+[hidden]{display:none!important}
+.cyc .chip{align-self:flex-start}
+body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display:none!important}
+#auth{max-width:440px;margin:40px auto;padding:0 16px}
+#auth .card{display:flex;flex-direction:column;gap:14px}
+#auth .err{color:var(--danger);font-size:13px;min-height:1em}
+.av.ini{display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--accent);background:var(--accent-soft)}
+.cycles{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+@media (max-width:880px){.cycles{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:480px){.cycles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.cyc{background:var(--sunk);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.cyc h3{font-size:13px;font-weight:650}
+.cyc.cur{box-shadow:inset 0 0 0 2px var(--accent)}
+.cyc .what{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.checks{display:flex;flex-wrap:wrap;gap:6px 14px}
+.rota.short{color:var(--danger)}
+</style>
+</head>
+<body class="signed-out">
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand-row">
+      <div class="brand"><h1>Team Desk</h1><span class="date" id="today-date"></span></div>
+      <div class="me" id="me-chip"></div>
+      <button class="btn small ghost" type="button" id="signout">Sign out</button>
+    </div>
+    <nav class="tabs" aria-label="Sections">
+      <a href="#calendar" data-view="calendar" class="admin-only">Calendar</a>
+      <a href="#today" data-view="today">Today</a>
+      <a href="#leave" data-view="leave">Leave &amp; WFH<span class="count" id="pending-count" hidden></span></a>
+      <a href="#tasks" data-view="tasks">Tasks</a>
+      <a href="#timesheet" data-view="timesheet">Timesheet</a>
+      <a href="#team" data-view="team">Team</a>
+      <a href="#bonding" data-view="bonding">Team bonding</a>
+      <a href="#stats" data-view="stats" class="admin-only">Stats</a>
+    </nav>
+  </div>
+</header>
+
+<div id="auth" hidden>
+  <div class="card">
+    <h2 id="a-title" style="font-size:17px">Sign in</h2>
+    <p class="muted" style="margin:0" id="a-help">Use your work email. First time here? Enter your email, choose a password and press Create account.</p>
+    <form id="a-form" novalidate>
+      <fieldset class="fs">
+        <label class="field"><span>Work email</span><input type="email" id="a-email" autocomplete="email" required></label>
+        <label class="field"><span>Password</span><input type="password" id="a-pass" autocomplete="current-password" minlength="6" required></label>
+        <div class="form-foot"><button class="btn primary" type="submit">Sign in</button><span style="display:flex;gap:6px"><button class="btn" type="button" id="a-create">Create account</button><button class="btn ghost" type="button" id="a-reset">Forgot password</button></span></div>
+      </fieldset>
+    </form>
+    <div id="a-verify" hidden>
+      <p style="margin:0 0 10px">We sent a verification link to <b id="a-vemail"></b>. Open it, then come back and press Continue.</p>
+      <div class="punch-actions"><button class="btn primary" type="button" id="a-cont">Continue</button><button class="btn" type="button" id="a-resend">Resend email</button><button class="btn ghost" type="button" id="a-other">Use another account</button></div>
+    </div>
+    <div class="err" id="a-err" role="alert"></div>
+  </div>
+</div>
+
+<main class="wrap">
+  <div class="banner" id="banner" role="status">Connecting to your team's data…</div>
+
+  <!-- CALENDAR (manager only) -->
+  <section class="view" id="view-calendar" hidden>
+    <div class="cal-layout">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="bc-title">Calendar</h2>
+          <div class="filters">
+            <button class="btn small" type="button" id="cal-prev" aria-label="Previous month">‹ Prev</button>
+            <button class="btn small" type="button" id="cal-today">This month</button>
+            <button class="btn small" type="button" id="cal-next" aria-label="Next month">Next ›</button>
+          </div>
+        </div>
+        <div class="cal-stats" id="cal-stats"></div>
+        <div class="cal-scroll"><div class="bigcal" id="bigcal"><div class="empty">Loading the calendar…</div></div></div>
+        <div class="legend"><span class="cchip leave">Leave</span><span class="cchip wfh">Name · WFH</span><span class="cchip leave pending">Awaiting approval</span><span class="cchip flag">Over the daily limit</span><span>Only you can see this calendar.</span></div>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><h2>Coming up</h2><span class="sub">Next 30 days</span></div>
+          <div class="agenda" id="upcoming"><div class="empty">Loading…</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Add an entry</h2></div>
+          <form id="entry-form" novalidate>
+            <fieldset class="fs" id="entry-fs">
+              <label class="field"><span>Person</span><select id="en-who"></select></label>
+              <div class="row2">
+                <label class="field"><span>Type</span><select id="en-type"><option value="leave">Leave</option><option value="wfh">Work from home</option></select></label>
+                <label class="field" id="en-cat-field"><span>Leave type</span><select id="en-cat"><option value="casual">Casual</option><option value="sick">Sick</option><option value="earned">Earned</option><option value="unpaid">Unpaid</option></select></label>
+              </div>
+              <div class="row2">
+                <label class="field"><span>From</span><input type="date" id="en-from"></label>
+                <label class="field"><span>To</span><input type="date" id="en-to"></label>
+              </div>
+              <div class="form-foot"><span class="muted">Saved as approved.</span><button class="btn primary" type="submit">Add to calendar</button></div>
+            </fieldset>
+          </form>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TODAY -->
+  <section class="view" id="view-today" hidden>
+    <div class="grid">
+      <div class="stack">
+        <div class="card">
+          <div class="punch" id="punch"><div class="empty">Loading your day…</div></div>
+          <div id="punch-fix"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>My open tasks</h2><a class="btn small ghost" href="#tasks">All tasks</a></div>
+          <div class="list" id="my-tasks"><div class="empty">Loading tasks…</div></div>
+        </div>
+        <div class="card admin-only" id="appr-mini-card">
+          <div class="card-head"><h2>Waiting for your approval</h2><a class="btn small ghost" href="#leave">Review</a></div>
+          <div id="appr-mini" class="muted">Nothing pending.</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Who's working today</h2><span class="sub mono" id="now-time"></span></div>
+        <div class="tally" id="tally"></div>
+        <div id="team-today"><div class="empty">Loading the team…</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LEAVE -->
+  <section class="view" id="view-leave" hidden>
+    <div class="grid">
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><h2>Request time off or WFH</h2></div>
+          <form id="apply-form" novalidate>
+            <fieldset class="fs" id="apply-fs">
+              <div class="seg" role="group" aria-label="Request type">
+                <button type="button" data-type="leave" aria-pressed="true">Leave</button>
+                <button type="button" data-type="wfh" aria-pressed="false">Work from home</button>
+              </div>
+              <label class="field" id="cat-field"><span>Leave type</span>
+                <select id="ap-cat">
+                  <option value="casual">Casual leave</option>
+                  <option value="sick">Sick leave</option>
+                  <option value="earned">Earned leave</option>
+                  <option value="unpaid">Unpaid leave</option>
+                </select>
+              </label>
+              <div class="row2">
+                <label class="field"><span>From</span><input type="date" id="ap-from" required></label>
+                <label class="field"><span>To</span><input type="date" id="ap-to" required></label>
+              </div>
+              <label class="check" id="half-field"><input type="checkbox" id="ap-half"> Half day only</label>
+              <label class="field"><span>Reason <em>(optional)</em></span><textarea id="ap-reason" rows="2" maxlength="300"></textarea></label>
+              <div class="note danger" id="ap-clash" hidden></div>
+              <div class="note danger" id="ap-wfh" hidden></div>
+              <div class="form-foot"><span id="ap-count" class="muted"></span><button class="btn primary" type="submit">Send request</button></div>
+            </fieldset>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>My leave balance</h2><span class="sub" id="bal-year"></span></div>
+          <div class="bal" id="balance"></div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="card admin-only">
+          <div class="card-head"><h2>Pending approvals</h2><span class="sub" id="appr-sub"></span></div>
+          <div class="list" id="approvals"><div class="empty">Nothing waiting.</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>My requests</h2></div>
+          <div class="list" id="my-reqs"><div class="empty">Loading…</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TASKS -->
+  <section class="view" id="view-tasks" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Add a task</h2><span class="sub" id="task-hint"></span></div>
+      <form id="task-form" novalidate>
+        <fieldset class="fs" id="task-fs">
+          <label class="field"><span>Task</span><input id="tk-title" maxlength="140" placeholder="e.g. Run QC on batch 42 and share the report" required></label>
+          <div class="row3">
+            <label class="field"><span>Assign to</span><select id="tk-who"></select></label>
+            <label class="field"><span>Due date <em>(optional)</em></span><input type="date" id="tk-due"></label>
+            <label class="field"><span>Priority</span>
+              <select id="tk-pri"><option value="normal">Normal</option><option value="high">High</option><option value="low">Low</option></select>
+            </label>
+          </div>
+          <label class="field"><span>Notes <em>(optional)</em></span><textarea id="tk-notes" rows="2" maxlength="600"></textarea></label>
+          <div class="form-foot"><span></span><button class="btn primary" type="submit">Add task</button></div>
+        </fieldset>
+      </form>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h2>Task board</h2>
+        <div class="filters"><label class="muted" for="task-filter">Show</label><select id="task-filter"></select></div>
+      </div>
+      <div class="board" id="board"><div class="empty">Loading tasks…</div></div>
+    </div>
+  </section>
+
+  <!-- TIMESHEET -->
+  <section class="view" id="view-timesheet" hidden>
+    <div class="card">
+      <div class="card-head">
+        <h2>Timesheet</h2>
+        <div class="filters">
+          <select id="ts-person" aria-label="Person"></select>
+          <input type="month" id="ts-month" aria-label="Month" style="width:auto">
+          <button class="btn small" type="button" id="ts-csv" hidden>Download CSV</button>
+        </div>
+      </div>
+      <div class="sumrow" id="ts-sum"></div>
+      <div class="table-wrap" id="ts-table"><div class="empty">Loading…</div></div>
+    </div>
+  </section>
+
+  <!-- TEAM BONDING -->
+  <section class="view" id="view-bonding" hidden>
+    <div class="card">
+      <div class="card-head">
+        <h2 id="bd-title">Team bonding</h2>
+        <div class="filters">
+          <button class="btn small" type="button" id="bd-prev" aria-label="Previous year">‹ Prev</button>
+          <button class="btn small" type="button" id="bd-next" aria-label="Next year">Next ›</button>
+        </div>
+      </div>
+      <div id="bd-status" style="margin-bottom:12px"></div>
+      <div class="cycles" id="bd-cycles"></div>
+      <p class="muted" style="margin:12px 0 0">One team bonding activity every two months: Jan–Feb, Mar–Apr, May–Jun, Jul–Aug, Sep–Oct, Nov–Dec.</p>
+    </div>
+    <div class="grid even">
+      <div class="card admin-only">
+        <div class="card-head"><h2>Add an activity</h2></div>
+        <form id="ev-form" novalidate>
+          <fieldset class="fs" id="ev-fs">
+            <div class="row2">
+              <label class="field"><span>Date</span><input type="date" id="ev-date" required></label>
+              <label class="field"><span>Activity</span><input id="ev-title" maxlength="80" placeholder="e.g. Team lunch, bowling" required></label>
+            </div>
+            <label class="field"><span>Notes <em>(optional)</em></span><input id="ev-notes" maxlength="200" placeholder="Place, budget, organiser"></label>
+            <div class="field"><span>Attended</span><div class="checks" id="ev-who"></div></div>
+            <div class="form-foot"><span class="muted">Planned dates in the future show as planned.</span><button class="btn primary" type="submit">Save activity</button></div>
+          </fieldset>
+        </form>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>All activities</h2></div>
+        <div class="list" id="ev-list"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STATS (managers only) -->
+  <section class="view" id="view-stats" hidden>
+    <div class="card">
+      <div class="card-head">
+        <h2>Team stats</h2>
+        <div class="filters"><label class="muted" for="sp-period">Period</label>
+          <select id="sp-period">
+            <option value="week">This week</option>
+            <option value="month" selected>This month</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+        </div>
+      </div>
+      <div class="sumrow" id="stats-sum"></div>
+      <div class="table-wrap" id="stats-table"><div class="empty">Loading…</div></div>
+      <p class="muted" style="margin:12px 0 0">On time = finished on or before the due date (tasks with no due date are left out). Hours count only days with both a check-in and a check-out. Office % = office days ÷ working days so far, not counting approved leave (target 67%). Extra hours = time past the expected hours on a working day, or any time worked on a day off. Only managers see this tab.</p>
+    </div>
+  </section>
+
+  <!-- TEAM -->
+  <section class="view" id="view-team" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Team overview</h2><span class="sub" id="team-sub"></span></div>
+      <div class="table-wrap" id="roster"><div class="empty">Loading the team…</div></div>
+    </div>
+    <div class="grid even admin-only">
+      <div class="card">
+        <div class="card-head"><h2>Add a teammate</h2></div>
+        <p class="muted" style="margin:0 0 10px">Everyone in config.js is put on the board automatically. To add a new person, add their name and email to config.js and firestore.rules first; to bring back someone you removed, search for them here.</p>
+        <input id="add-q" placeholder="Search by name or email" autocomplete="off">
+        <div class="results" id="add-results"></div>
+        <div id="invite-status"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Team settings</h2></div>
+        <form id="settings-form" novalidate>
+          <fieldset class="fs" id="settings-fs">
+            <div class="row3">
+              <label class="field"><span>Paid leave days / year</span><input type="number" id="st-allow" min="0" max="60" step="0.5"></label>
+              <label class="field"><span>Expected hours / day</span><input type="number" id="st-hours" min="1" max="14" step="0.5"></label>
+              <label class="field"><span>Max away per day</span><input type="number" id="st-max" min="1" max="20" step="1"></label>
+            </div>
+            <p class="muted" style="margin:0">Max away per day: once this many people have asked for leave or WFH on a date, anyone else who asks gets a warning and their request is flagged in red.</p>
+            <div class="row2">
+              <label class="field"><span>Saturday rota: on</span><input type="date" id="st-anchor"></label>
+              <label class="field"><span>the group on duty is</span><select id="st-anchor-group"><option value="1">Group 1</option><option value="2">Group 2</option><option value="3">Group 3</option><option value="4">Group 4</option><option value="5">Group 5</option></select></label>
+            </div>
+            <p class="muted" style="margin:0">Sundays are off. Each Saturday one group of 2 works, in turn (1 → 2 → 3 → 4 → 5 → 1); everyone else is on leave. Put exactly two people in each group in the Team overview table above.</p>
+            <div class="form-foot"><span class="muted">Days under the expected hours are flagged in timesheets.</span><button class="btn primary" type="submit">Save settings</button></div>
+          </fieldset>
+        </form>
+        <div class="note" style="margin-top:14px">Team members and managers are set in <b>config.js</b> and <b>firestore.rules</b>. Members can check in, request leave and update their own tasks, and see only their own leave requests. Managers can see the team calendar, approve leave, assign tasks to anyone, plan team bonding and change these settings.</div>
+      </div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+/* Firebase connector: signs people in with their work email and gives Team Desk
+   the same db / user / downloads interface it had on claude.ai. */
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const CFG = window.TRACKER_CONFIG || {};
+const TEAM = CFG.team || {};
+const ADMINS = (CFG.admins || []).map(e => String(e).trim().toLowerCase());
+const DOMAIN = String(CFG.allowedEmailDomain || '').toLowerCase().replace(/^@/, '');
+const slug = n => String(n).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const byEmail = {}, nameOf = {}, emailOf = {};
+for (const [name, email] of Object.entries(TEAM)) { const id = slug(name), em = String(email).trim().toLowerCase(); byEmail[em] = id; nameOf[id] = name; emailOf[id] = em; }
+window.TD = {nameOf, emailOf};
+
+let resolveCtx;
+const ctxP = new Promise(r => { resolveCtx = r; });
+window.claude = {use: async name => { const c = await ctxP; return c ? (c[name] || null) : null; }};
+
+const okDomain = e => !DOMAIN || String(e || '').toLowerCase().endsWith('@' + DOMAIN);
+const MSG = {
+  'auth/invalid-credential': 'Email or password is wrong.', 'auth/wrong-password': 'Email or password is wrong.',
+  'auth/user-not-found': 'No account for that email. Press Create account.', 'auth/email-already-in-use': 'That email already has an account. Press Sign in.',
+  'auth/weak-password': 'Choose a password of at least 6 characters.', 'auth/invalid-email': "That email address isn't valid.",
+  'auth/too-many-requests': 'Too many attempts. Wait a few minutes and try again.', 'auth/network-request-failed': "Can't reach the server. Check your internet connection."
+};
+const authMsg = e => MSG[e && e.code] || (e && e.message) || 'Something went wrong. Try again.';
+function gate(step, err) {
+  document.body.classList.add('signed-out');
+  $('#auth').hidden = false;
+  $('#a-form').hidden = step !== 'signin';
+  $('#a-verify').hidden = step !== 'verify';
+  $('#a-title').textContent = step === 'verify' ? 'Verify your email' : step === 'setup' ? 'Setup needed' : 'Sign in';
+  if (DOMAIN && step === 'signin') $('#a-help').textContent = `Use your @${DOMAIN} email. First time here? Enter your email, choose a password and press Create account.`;
+  if (step === 'setup') $('#a-help').textContent = 'Add your Firebase project settings to config.js. The README explains how.';
+  $('#a-err').textContent = err || '';
+}
+
+function start() {
+  const fb = CFG.firebase || {};
+  if (!window.firebase || !fb.apiKey || /PASTE/.test(fb.apiKey)) { gate('setup'); return; }
+  firebase.initializeApp(fb);
+  const auth = firebase.auth(), fs = firebase.firestore();
+  $('#a-form').addEventListener('submit', async e => {
+    e.preventDefault(); $('#a-err').textContent = '';
+    try { await auth.signInWithEmailAndPassword($('#a-email').value.trim(), $('#a-pass').value); } catch (err) { $('#a-err').textContent = authMsg(err); }
+  });
+  $('#a-create').onclick = async () => {
+    const em = $('#a-email').value.trim(), pw = $('#a-pass').value; $('#a-err').textContent = '';
+    if (!em || !pw) { $('#a-err').textContent = 'Enter your email and a password first.'; return; }
+    if (!okDomain(em)) { $('#a-err').textContent = `Only @${DOMAIN} email addresses can join.`; return; }
+    try { const c = await auth.createUserWithEmailAndPassword(em, pw); await c.user.sendEmailVerification(); } catch (err) { $('#a-err').textContent = authMsg(err); }
+  };
+  $('#a-reset').onclick = async () => {
+    const em = $('#a-email').value.trim(); if (!em) { $('#a-err').textContent = 'Enter your email first.'; return; }
+    try { await auth.sendPasswordResetEmail(em); $('#a-err').textContent = 'Password reset email sent. Check your inbox.'; } catch (err) { $('#a-err').textContent = authMsg(err); }
+  };
+  $('#a-cont').onclick = async () => {
+    const u = auth.currentUser; if (!u) return;
+    await u.reload();
+    if (auth.currentUser.emailVerified) { await auth.currentUser.getIdToken(true); location.reload(); }
+    else $('#a-err').textContent = 'Not verified yet. Open the link in the email, then press Continue.';
+  };
+  $('#a-resend').onclick = async () => { try { await auth.currentUser.sendEmailVerification(); $('#a-err').textContent = 'Sent again. Check your inbox and spam folder.'; } catch (err) { $('#a-err').textContent = authMsg(err); } };
+  $('#a-other').onclick = () => auth.signOut();
+  $('#signout').onclick = () => auth.signOut().then(() => location.reload());
+
+  let started = false;
+  auth.onAuthStateChanged(u => {
+    if (!u) { gate('signin'); return; }
+    if (!okDomain(u.email)) { auth.signOut(); gate('signin', `Only @${DOMAIN} email addresses can use Team Desk.`); return; }
+    if (!u.emailVerified) { $('#a-vemail').textContent = u.email; gate('verify'); return; }
+    if (started) return;
+    started = true;
+    document.body.classList.remove('signed-out');
+    $('#auth').hidden = true;
+    const em = String(u.email).toLowerCase(), me = byEmail[em] || null, admin = ADMINS.includes(em) && !!me;
+    const profiles = async ids => { const o = {}; for (const i of ids) o[i] = {id: i, name: nameOf[i] || '', email: emailOf[i] || '', avatarUrl: ''}; return o; };
+    const user = {
+      me: async () => ({id: me, canEdit: admin, name: nameOf[me] || '', email: em}),
+      id: async () => me,
+      isOwner: () => admin, canEdit: () => admin,
+      can: async n => n === 'data.write' ? !!me : null,
+      profiles,
+      search: async q => { q = String(q || '').trim().toLowerCase(); return Object.keys(nameOf).filter(id => !q || nameOf[id].toLowerCase().includes(q) || emailOf[id].includes(q)).map(id => ({id, name: nameOf[id], email: emailOf[id], avatarUrl: ''})); }
+    };
+    const downloads = {save: async ({filename, data}) => {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], {type: 'text/csv'})); a.download = filename;
+      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }};
+    resolveCtx({db: fs, user, downloads});
+  });
+}
+start();
+})();
+</script>
+<script>
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2, '0');
+const dkey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const pkey = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const isWknd = d => d.getDay() === 0 || d.getDay() === 6;
+const todayKey = () => dkey(new Date());
+const mkey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+const fmtTime = ms => new Date(ms).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+const fmtDur = ms => { const m = Math.max(0, Math.round(ms / 60000)); return `${Math.floor(m / 60)}h ${pad(m % 60)}m`; };
+const fmtDay = k => pkey(k).toLocaleDateString([], {weekday: 'short', day: 'numeric', month: 'short'});
+const fmtShort = k => pkey(k).toLocaleDateString([], {day: 'numeric', month: 'short'});
+const fmtMonth = m => pkey(m + '-01').toLocaleDateString([], {month: 'long', year: 'numeric'});
+/* Sundays are off. Each Saturday one rota group works (about 30% of the team), rotating weekly from settings.satAnchor. */
+const DAY = 86400000;
+function satGroupCount() { const v = Object.values(S.settings.satGroup || {}).map(Number).filter(Boolean); return Math.max(5, ...v, 1); }
+function satGroupOn(k) {
+  const anchor = S.settings.satAnchor || '2026-11-21';
+  const weeks = Math.round((pkey(k) - pkey(anchor)) / (7 * DAY));
+  const n = satGroupCount(), start = (Number(S.settings.satAnchorGroup) || 1) - 1;
+  return (((weeks + start) % n) + n) % n + 1;
+}
+const satCrew = k => Object.entries(S.settings.satGroup || {}).filter(([id, g]) => Number(g) === satGroupOn(k) && S.roster.has(id) && !S.roster.get(id).removed).map(([id]) => id);
+function isWorkDay(uid, d) {
+  const g = d.getDay();
+  if (g === 0) return false;
+  if (g !== 6) return true;
+  const grp = Number((S.settings.satGroup || {})[uid]);
+  return !!grp && grp === satGroupOn(dkey(d));
+}
+const offLabel = d => d.getDay() === 0 ? 'Sunday off' : 'Off this Saturday';
+function workDays(from, to, half, uid) {
+  if (!from || !to || to < from) return 0;
+  if (half) return isWorkDay(uid, pkey(from)) ? 0.5 : 0;
+  let n = 0;
+  for (let d = pkey(from); dkey(d) <= to; d = addDays(d, 1)) if (isWorkDay(uid, d)) n++;
+  return n;
+}
+const WINDOW_DAYS = 100;
+const windowStart = () => dkey(addDays(new Date(), -WINDOW_DAYS));
+const CAT = {casual: 'Casual', sick: 'Sick', earned: 'Earned', unpaid: 'Unpaid'};
+const PRI_ORDER = {high: 0, normal: 1, low: 2};
+
+const S = {
+  db: null, user: null, dl: null,
+  me: null, admin: false, ro: false, status: 'loading',
+  roster: new Map(), att: new Map(), reqs: new Map(), tasks: new Map(), appr: new Map(), holds: new Map(),
+  clash: {byDate: new Map(), flagged: new Map(), max: 2},
+  invites: null, inviteRunning: false, inviteDone: false,
+  settings: {allowance: 18, hours: 8, maxAway: 2},
+  events: new Map(), bdYear: new Date().getFullYear(),
+  names: {}, nameSig: '',
+  subs: new Map(), registering: false,
+  view: 'today', mode: null, applyType: 'leave',
+  calMonth: mkey(new Date()), taskFilter: 'mine',
+  ts: {person: null, month: mkey(new Date())}, tsCache: new Map(), tsLoading: new Set(),
+  busy: false,
+};
+
+/* ---------- helpers ---------- */
+/* A display name the manager set in Team overview wins over the person's Claude profile name. */
+const nm = id => ((S.settings.displayNames || {})[id] || '').trim() || (S.names[id] && S.names[id].name) || (id === S.me ? 'You' : 'Teammate');
+const first = id => nm(id).split(/\s+/)[0];
+const ini = id => { const w = nm(id).split(/[\s._-]+/).filter(Boolean); return ((w[0] || '?')[0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase(); };
+const nameHTML = id => `<span class="nm-full">${esc(nm(id))}</span><span class="nm-ini" title="${esc(nm(id))}">${esc(ini(id))}</span>`;
+function avatar(id, size = 24) {
+  const p = S.names[id];
+  if (p && p.avatarUrl) return `<img class="av" width="${size}" height="${size}" style="width:${size}px;height:${size}px" src="${esc(p.avatarUrl)}" alt="">`;
+  return `<span class="av ini" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px" aria-hidden="true">${esc(ini(id))}</span>`;
+}
+const who = (id, size) => `<span class="who">${avatar(id, size)}<span class="nm">${nameHTML(id)}${id === S.me ? ' <span class="faint">(you)</span>' : ''}</span></span>`;
+function setHTML(el, html) { if (el && el._h !== html) { el.innerHTML = html; el._h = html; } }
+const ready = () => S.status === 'ready';
+const canAct = () => ready() && !S.ro;
+const people = () => [...S.roster.entries()].filter(([, d]) => !d.removed).map(([id]) => id)
+  .sort((a, b) => (a === S.me ? -1 : b === S.me ? 1 : nm(a).localeCompare(nm(b))));
+
+let toastT;
+function toast(msg, err) {
+  const t = $('#toast'); t.textContent = msg; t.classList.toggle('err', !!err); t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), err ? 6000 : 2600);
+}
+function errText(e) {
+  switch (e && e.code) {
+    case 'invalid_argument': case 'permission-denied': return "That change isn't allowed. You can only change your own records; managers change the rest.";
+    case 'not-found': return 'That record no longer exists. Reload the page.';
+    case 'unavailable': return "Can't reach the database. Check your connection and try again.";
+    case 'quota_exceeded': return 'The team database is full. Ask the page owner to clear old records.';
+    case 'resource_exhausted': return 'Too many changes at once. Wait a moment and try again.';
+    case 'revoked': return 'Your access to this page changed. Reload to continue.';
+    default: return "Couldn't save. Check your connection and try again.";
+  }
+}
+async function guard(fn, ok) {
+  if (S.busy) return false;
+  S.busy = true;
+  try { await fn(); if (ok) toast(ok); return true; }
+  catch (e) { toast(errText(e), true); return false; }
+  finally { S.busy = false; renderAll(); }
+}
+
+/* ---------- derived data ---------- */
+function reqStatus(uid, id, r) {
+  if (r.cancelled) return 'cancelled';
+  const a = S.appr.get(uid)?.get(id);
+  if (a && a.from === r.from && a.to === r.to && a.type === r.type && !!a.half === !!r.half) return a.decision;
+  return 'pending';
+}
+const maxAway = () => Math.max(1, Number(S.settings.maxAway) || 2);
+function eachWorkDay(from, to, fn, uid) { for (let d = pkey(from); dkey(d) <= to; d = addDays(d, 1)) if (isWorkDay(uid, d)) fn(dkey(d)); }
+/* Manager view: who is away each day, and which requests came after the limit was already reached. */
+function computeClash() {
+  const max = maxAway();
+  const byDate = new Map(), flagged = new Map();
+  for (const r of allReqs()) {
+    if (r.status !== 'pending' && r.status !== 'approved') continue;
+    eachWorkDay(r.from, r.to, k => { if (!byDate.has(k)) byDate.set(k, []); byDate.get(k).push(r); }, r.uid);
+  }
+  for (const [k, list] of byDate) {
+    list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const order = [];
+    for (const r of list) {
+      if (!order.includes(r.uid)) order.push(r.uid);
+      if (order.indexOf(r.uid) >= max) { const key = r.uid + '/' + r.id; if (!flagged.has(key)) flagged.set(key, []); flagged.get(key).push(k); }
+    }
+  }
+  S.clash = {byDate, flagged, max};
+}
+const myHoldIds = () => new Set([...(S.reqs.get(S.me)?.values() || [])].map(r => r.holdId).filter(Boolean));
+/* Anyone: dates in a range where the limit is already reached, counted from anonymous holds (no names). */
+function holdClash(from, to, before) {
+  const max = maxAway(), mine = myHoldIds(), out = [];
+  if (!from || !to || to < from) return out;
+  eachWorkDay(from, to, k => {
+    let n = 0;
+    for (const [id, h] of S.holds) {
+      const covers = Array.isArray(h.days) ? h.days.includes(k) : (h.from <= k && k <= h.to);
+      if (!mine.has(id) && covers && (before == null || (h.at || 0) < before)) n++;
+    }
+    if (n >= max) out.push({k, n});
+  }, S.me);
+  return out;
+}
+function holdDays(from, to, half, uid) { const out = []; if (half) { if (isWorkDay(uid, pkey(from))) out.push(from); } else eachWorkDay(from, to, k => out.push(k), uid); return out.slice(0, 120); }
+function flagDates(r) {
+  if (r.status !== 'pending' && r.status !== 'approved') return [];
+  if (S.admin) return S.clash.flagged.get(r.uid + '/' + r.id) || [];
+  return r.uid === S.me ? holdClash(r.from, r.to, r.createdAt || 0).map(x => x.k) : [];
+}
+const listDates = ks => ks.slice(0, 4).map(fmtShort).join(', ') + (ks.length > 4 ? ` +${ks.length - 4} more` : '');
+function allReqs() {
+  const out = [];
+  for (const [uid, m] of S.reqs) {
+    if (S.roster.get(uid)?.removed) continue;
+    for (const [id, r] of m) out.push({uid, id, ...r, status: reqStatus(uid, id, r)});
+  }
+  return out;
+}
+function reqOn(uid, day, type, statuses = ['approved']) {
+  const m = S.reqs.get(uid); if (!m) return null;
+  for (const [id, r] of m) {
+    if (r.type !== type || !(r.from <= day && day <= r.to)) continue;
+    const st = reqStatus(uid, id, r);
+    if (statuses.includes(st)) return {id, ...r, status: st};
+  }
+  return null;
+}
+function allTasks() {
+  const out = [];
+  for (const [uid, m] of S.tasks) {
+    if (S.roster.get(uid)?.removed) continue;
+    for (const [id, t] of m) out.push({uid, id, ...t});
+  }
+  return out;
+}
+function leaveUsed(uid, year) {
+  let used = 0, pending = 0;
+  for (const r of allReqs()) {
+    if (r.uid !== uid || r.type !== 'leave' || r.category === 'unpaid' || !String(r.from).startsWith(year)) continue;
+    const n = workDays(r.from, r.to, r.half, uid);
+    if (r.status === 'approved') used += n; else if (r.status === 'pending') pending += n;
+  }
+  return {used, pending};
+}
+function todayStatus(uid) {
+  const t = todayKey();
+  const a = S.att.get(uid)?.get(t);
+  if (a && a.inAt) {
+    if (a.outAt) return {k: 'out', label: 'Checked out', a};
+    return a.mode === 'wfh' ? {k: 'wfh', label: 'Working from home', a} : {k: 'office', label: 'In office', a};
+  }
+  const lv = reqOn(uid, t, 'leave');
+  if (lv) return {k: 'leave', label: lv.half ? 'Half-day leave' : 'On leave'};
+  if (reqOn(uid, t, 'wfh')) return {k: 'wfhplan', label: 'WFH · not in yet'};
+  const now = new Date();
+  return {k: 'idle', label: isWorkDay(uid, now) ? (now.getDay() === 6 ? 'Saturday duty · not in yet' : 'Not checked in') : offLabel(now)};
+}
+/* ---- team rules: 1 WFH per week, 67% office attendance, overtime ---- */
+const TARGET = 0.67;
+const weekOf = k => { const d = pkey(k); const m = addDays(d, -((d.getDay() + 6) % 7)); return Array.from({length: 7}, (_, i) => dkey(addDays(m, i))); };
+function wfhDays(uid, k, exclude) {
+  const out = new Set();
+  for (const day of weekOf(k)) {
+    const a = S.att.get(uid)?.get(day);
+    if (a && a.inAt && a.mode === 'wfh') out.add(day);
+    const m = S.reqs.get(uid);
+    if (m) for (const [id, r] of m) {
+      if (id === exclude || r.type !== 'wfh' || r.cancelled) continue;
+      const st = reqStatus(uid, id, r);
+      if ((st === 'pending' || st === 'approved') && r.from <= day && day <= r.to && isWorkDay(uid, pkey(day))) out.add(day);
+    }
+  }
+  return out;
+}
+/* weeks where the WFH days in from..to, added to what is already booked, go over 1 */
+function wfhOver(uid, from, to, exclude) {
+  const byWeek = new Map();
+  eachWorkDay(from, to, k => { const w = weekOf(k)[0]; if (!byWeek.has(w)) byWeek.set(w, wfhDays(uid, k, exclude)); byWeek.get(w).add(k); }, uid);
+  return [...byWeek].filter(([, s]) => s.size > 1).map(([w, s]) => ({w, n: s.size}));
+}
+function wfhOverWeeksInMonth(uid, m) {
+  const weeks = new Set(monthDays(m).map(k => weekOf(k)[0]));
+  return [...weeks].filter(w => wfhDays(uid, w, null).size > 1).length;
+}
+function officeStats(uid, from, to) {
+  const t = todayKey(); let base = 0, office = 0;
+  for (let d = pkey(from); dkey(d) <= to; d = addDays(d, 1)) {
+    const k = dkey(d); if (k > t) break;
+    if (!isWorkDay(uid, d)) continue;
+    const a = S.att.get(uid)?.get(k), inn = a && a.inAt;
+    if (k === t && !inn) continue;
+    if (!inn && reqOn(uid, k, 'leave')) continue;
+    base++; if (inn && a.mode !== 'wfh') office++;
+  }
+  return {base, office, pct: base ? office / base : null};
+}
+const pctHTML = p => p == null ? '<span class="faint">—</span>' : `<span class="rate ${p >= TARGET ? 'good' : 'low'}">${Math.round(p * 100)}%</span>`;
+function extraMs(uid, a) {
+  if (!a || !a.inAt || !a.outAt) return 0;
+  const w = a.outAt - a.inAt;
+  if (!isWorkDay(uid, pkey(a.date))) return w;
+  return Math.max(0, w - (Number(S.settings.hours) || 8) * 3600000);
+}
+const ordinal = n => n + (n === 2 ? 'nd' : n === 3 ? 'rd' : 'th');
+const chipClass = k => ({office: 'office', wfh: 'wfh', wfhplan: 'wfh pending', leave: 'leave', out: '', idle: ''}[k] || '');
+
+/* ---------- rendering ---------- */
+let rq = false;
+function renderAll() { if (rq) return; rq = true; setTimeout(() => { rq = false; doRender(); }, 20); }
+function doRender() {
+  if (S.admin) computeClash();
+  renderHeader(); renderBanner(); renderCalendar(); renderToday(); renderLeave(); renderTasks(); renderTimesheet(); renderTeam(); renderStats(); renderBonding();
+  updateForms(); refreshNames();
+}
+function renderHeader() {
+  $('#today-date').textContent = new Date().toLocaleDateString([], {weekday: 'long', day: 'numeric', month: 'long'});
+  setHTML($('#me-chip'), S.me ? `${avatar(S.me, 26)}<span class="nm">${nameHTML(S.me)}</span><span class="role">${S.admin ? 'Manager' : 'Member'}</span>` : '');
+  const pend = S.admin ? allReqs().filter(r => r.status === 'pending').length : 0;
+  const pc = $('#pending-count'); pc.hidden = !pend; pc.textContent = pend;
+}
+function renderBanner() {
+  const b = $('#banner');
+  const msg = {
+    loading: "Connecting to your team's data…",
+    offline: "Can't reach the team data yet. Check your connection; the page will update by itself once it connects.",
+    nodb: "You're signed in, but your email isn't on the team list. Ask a manager to add it to config.js and firestore.rules.",
+    error: 'The connection to the team data stopped. Reload the page to reconnect.',
+  }[S.status];
+  if (msg) { b.hidden = false; b.className = 'banner' + (S.status === 'loading' ? '' : ' warn'); b.textContent = msg; return; }
+  if (S.ro) { b.hidden = false; b.className = 'banner warn'; b.textContent = "You can see this page but not make changes. Ask a manager to check your email is on the team list."; return; }
+  b.hidden = true;
+}
+
+function renderToday() {
+  if (!ready()) return;
+  const t = todayKey(), now = Date.now();
+  $('#now-time').textContent = fmtTime(now);
+  // my punch card
+  const a = S.att.get(S.me)?.get(t);
+  const hr = new Date().getHours();
+  const hello = `${hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening'}, ${esc(first(S.me))}`;
+  const lv = reqOn(S.me, t, 'leave'), wf = reqOn(S.me, t, 'wfh');
+  if (!S.mode) S.mode = wf ? 'wfh' : 'office';
+  let html;
+  if (!a || !a.inAt) {
+    const seg = `<div class="seg" role="group" aria-label="Where are you working today">
+      <button type="button" data-act="mode" data-mode="office" aria-pressed="${S.mode === 'office'}">Office</button>
+      <button type="button" data-act="mode" data-mode="wfh" aria-pressed="${S.mode === 'wfh'}">Home</button></div>`;
+    html = `<div class="hello">${hello}</div>
+      ${lv ? `<div class="note warn">You're on approved ${lv.half ? 'half-day ' : ''}leave today.</div>` : wf ? `<div class="note">Your work-from-home request for today is approved.</div>` : `<div class="muted">You haven't checked in yet today.</div>`}
+      <div class="punch-actions">${seg}<button class="btn primary big" type="button" data-act="checkin" ${canAct() ? '' : 'disabled'}>${lv && !lv.half ? 'Check in anyway' : 'Check in'}</button></div>`;
+  } else if (!a.outAt) {
+    html = `<div class="hello">${hello}</div>
+      <div><div class="clock">${esc(fmtDur(now - a.inAt))}<small>so far</small></div>
+      <div class="muted">Checked in at <span class="mono">${esc(fmtTime(a.inAt))}</span> · <span class="chip ${a.mode === 'wfh' ? 'wfh' : 'office'}">${a.mode === 'wfh' ? 'Home' : 'Office'}</span></div></div>
+      <div class="punch-actions"><button class="btn primary big" type="button" data-act="checkout" ${canAct() ? '' : 'disabled'}>Check out</button></div>`;
+  } else {
+    const short = (a.outAt - a.inAt) / 3600000 < S.settings.hours;
+    html = `<div class="hello">${hello}</div>
+      <div><div class="clock">${esc(fmtDur(a.outAt - a.inAt))}<small>worked today</small></div>
+      <div class="muted"><span class="mono">${esc(fmtTime(a.inAt))} → ${esc(fmtTime(a.outAt))}</span> · <span class="chip ${a.mode === 'wfh' ? 'wfh' : 'office'}">${a.mode === 'wfh' ? 'Home' : 'Office'}</span>${short ? ` · <span style="color:var(--leave)">under ${S.settings.hours}h</span>` : ''}</div></div>
+      <div class="punch-actions"><span class="chip">Checked out</span><button class="btn small ghost" type="button" data-act="undo-out" ${canAct() ? '' : 'disabled'}>Undo check-out</button></div>`;
+  }
+  if (a && a.outAt) {
+    const ex = extraMs(S.me, a);
+    if (ex >= 15 * 60000) html += `<div class="note"><b>${esc(fmtDur(ex))}</b> extra today. ${a.otTask ? `Overtime work: “${esc(a.otTask)}”` : 'What did you work on?'}
+      <div class="fixrow"><input id="ot-task" maxlength="200" placeholder="e.g. Sample verification backlog" value="${esc(a.otTask || '')}" style="flex:1;min-width:180px" aria-label="Overtime work"><button class="btn small" type="button" data-act="ot-save" data-date="${t}" ${canAct() ? '' : 'disabled'}>${a.otTask ? 'Update' : 'Save'}</button></div></div>`;
+  }
+  const os = officeStats(S.me, mkey(new Date()) + '-01', t);
+  html += `<div class="muted">Office attendance this month: ${pctHTML(os.pct)} <span class="faint">· target 67% · ${os.office} of ${os.base} working days in office</span></div>`;
+  setHTML($('#punch'), html);
+  // missed check-outs
+  const missed = [...(S.att.get(S.me)?.values() || [])].filter(x => x.inAt && !x.outAt && x.date < t).sort((x, y) => y.date.localeCompare(x.date)).slice(0, 3);
+  setHTML($('#punch-fix'), missed.map(x => `<div class="note warn" style="margin-top:14px">You didn't check out on <b>${esc(fmtDay(x.date))}</b> (checked in ${esc(fmtTime(x.inAt))}).
+    <div class="fixrow"><label class="muted" for="fix-${x.date}">Left at</label><input type="time" id="fix-${x.date}" value="18:00"><button class="btn small" type="button" data-act="fix-out" data-date="${x.date}" ${canAct() ? '' : 'disabled'}>Save check-out</button></div></div>`).join(''));
+
+  // my tasks
+  const mine = allTasks().filter(x => x.uid === S.me && x.status !== 'done').sort(taskSort).slice(0, 6);
+  setHTML($('#my-tasks'), mine.length ? mine.map(x => `<div class="item"><div class="main"><div class="title">${esc(x.title)}</div><div class="meta">${dueChip(x)}${x.priority === 'high' ? '<span class="chip danger nodot">High</span>' : ''}${x.status === 'doing' ? '<span class="chip accent nodot">In progress</span>' : ''}</div></div>
+    <div class="acts">${x.status === 'todo' ? btn('task-status', 'Start', x, 'doing') : ''}${btn('task-status', 'Done', x, 'done')}</div></div>`).join('')
+    : `<div class="empty">No open tasks. New ones you're given will show up here.</div>`);
+
+  // approvals mini
+  if (S.admin) {
+    const pend = allReqs().filter(r => r.status === 'pending');
+    setHTML($('#appr-mini'), pend.length ? `${pend.length} request${pend.length > 1 ? 's' : ''} from ${[...new Set(pend.map(r => esc(first(r.uid))))].join(', ')}.` : 'Nothing pending.');
+  }
+
+  // team today
+  const ppl = people();
+  const st = ppl.map(id => ({id, ...todayStatus(id)}));
+  const order = {office: 0, wfh: 1, out: 2, wfhplan: 3, leave: 4, idle: 5};
+  st.sort((x, y) => order[x.k] - order[y.k] || nm(x.id).localeCompare(nm(y.id)));
+  const c = k => st.filter(x => x.k === k).length;
+  setHTML($('#tally'), ppl.length ? [
+    [c('office'), 'in office', 'office'], [c('wfh'), 'working from home', 'wfh'], [c('out'), 'checked out', ''],
+    [c('leave'), 'on leave', 'leave'], [c('idle') + c('wfhplan'), 'not in yet', '']].filter(x => x[0]).map(x => `<span class="chip ${x[2]}">${x[0]} ${x[1]}</span>`).join('') : '');
+  const S0 = 7 * 60, S1 = 21 * 60;
+  const pos = ms => { const d = new Date(ms); const m = d.getHours() * 60 + d.getMinutes(); return Math.max(0, Math.min(100, (m - S0) / (S1 - S0) * 100)); };
+  const nowPos = pos(now);
+  const ticks = [9, 12, 15, 18].map(h => `<span style="left:${(h * 60 - S0) / (S1 - S0) * 100}%">${pad(h)}:00</span>`).join('');
+  setHTML($('#team-today'), ppl.length ? `<div class="trow head"><span>Person</span><span>Status</span><div class="ticks">${ticks}</div><span style="text-align:right">Hours</span></div>` + st.map(x => {
+    const a = x.a;
+    const bar = a && a.inAt ? `<div class="span ${a.mode === 'wfh' ? 'wfh' : ''} ${a.outAt ? '' : 'open'}" style="left:${pos(a.inAt)}%;width:${Math.max(0.6, pos(a.outAt || now) - pos(a.inAt))}%"></div>` : '';
+    const times = a && a.inAt ? `<span class="mono">${esc(fmtTime(a.inAt))} – ${a.outAt ? esc(fmtTime(a.outAt)) : 'now'} · ${esc(fmtDur((a.outAt || now) - a.inAt))}</span>` : '<span class="faint">—</span>';
+    return `<div class="trow">${who(x.id)}<span><span class="chip ${chipClass(x.k)}">${esc(x.label)}</span></span><div class="tl">${bar}<div class="now" style="left:${nowPos}%" title="Now"></div></div><div class="times">${times}</div></div>`;
+  }).join('') : `<div class="empty">No one has joined yet. Teammates appear here the first time they open this page.</div>`);
+}
+
+function btn(act, label, x, status, cls = 'small') {
+  return `<button class="btn ${cls}" type="button" data-act="${act}" data-uid="${esc(x.uid)}" data-id="${esc(x.id)}"${status ? ` data-status="${status}"` : ''} ${canAct() ? '' : 'disabled'}>${label}</button>`;
+}
+function dueChip(x) {
+  if (!x.due) return '';
+  const t = todayKey();
+  if (x.status !== 'done' && x.due < t) return `<span class="chip danger nodot">Overdue · ${esc(fmtShort(x.due))}</span>`;
+  if (x.due === t) return `<span class="chip leave nodot">Due today</span>`;
+  return `<span class="chip nodot">Due ${esc(fmtShort(x.due))}</span>`;
+}
+function taskSort(a, b) {
+  return (PRI_ORDER[a.priority] ?? 1) - (PRI_ORDER[b.priority] ?? 1) || (a.due || '9999').localeCompare(b.due || '9999') || (a.createdAt || 0) - (b.createdAt || 0);
+}
+
+function renderLeave() {
+  if (!ready()) return;
+  const year = String(new Date().getFullYear());
+  const {used, pending} = leaveUsed(S.me, year);
+  const allow = Number(S.settings.allowance) || 0;
+  $('#bal-year').textContent = year;
+  setHTML($('#balance'), `<div><b>${allow}</b><span>Allowed</span></div><div><b>${used}</b><span>Taken</span></div><div><b>${pending}</b><span>Awaiting approval</span></div><div><b>${Math.max(0, allow - used)}</b><span>Remaining</span></div>`);
+
+  const stChip = s => ({approved: '<span class="chip office">Approved</span>', rejected: '<span class="chip danger">Declined</span>', pending: '<span class="chip leave pending">Awaiting approval</span>', cancelled: '<span class="chip">Cancelled</span>'}[s]);
+  const desc = r => `${r.type === 'wfh' ? 'Work from home' : (CAT[r.category] || 'Leave') + ' leave'}`;
+  const range = r => r.from === r.to ? esc(fmtDay(r.from)) + (r.half ? ' (half day)' : '') : `${esc(fmtShort(r.from))} – ${esc(fmtDay(r.to))}`;
+  const t = todayKey();
+  const mine = allReqs().filter(r => r.uid === S.me).sort((a, b) => b.from.localeCompare(a.from)).slice(0, 25);
+  setHTML($('#my-reqs'), mine.length ? mine.map(r => {
+    const fl = flagDates(r);
+    return `<div class="item ${fl.length ? 'flagged' : ''}"><div class="main"><div class="title">${desc(r)} · ${range(r)}</div>
+    <div class="meta">${stChip(r.status)}<span>${workDays(r.from, r.to, r.half, r.uid)} working day${workDays(r.from, r.to, r.half, r.uid) === 1 ? '' : 's'}</span>${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
+    ${fl.length ? `<div class="meta"><span class="chip danger">Flagged: ${maxAway()} or more people were already away on ${esc(listDates(fl))}</span></div>` : ''}
+    ${wfhFlag(r)}</div>
+    <div class="acts">${(r.status === 'pending' || r.status === 'approved') && r.to >= t ? btn('req-cancel', 'Cancel', r) : ''}</div></div>`;
+  }).join('')
+    : `<div class="empty">You haven't made any requests yet. Use the form to ask for leave or a work-from-home day.</div>`);
+
+  if (S.admin) {
+    const pend = allReqs().filter(r => r.status === 'pending').sort((a, b) => a.from.localeCompare(b.from));
+    $('#appr-sub').textContent = pend.length ? `${pend.length} waiting` : '';
+    setHTML($('#approvals'), pend.length ? pend.map(r => {
+      const yr = String(r.from).slice(0, 4);
+      const lu = r.type === 'leave' ? leaveUsed(r.uid, yr) : null;
+      const fl = flagDates(r);
+      const others = fl.length ? [...new Set((S.clash.byDate.get(fl[0]) || []).filter(x => x.uid !== r.uid && (x.createdAt || 0) < (r.createdAt || 0)).map(x => first(x.uid)))] : [];
+      return `<div class="item ${fl.length ? 'flagged' : ''}"><div class="main">${who(r.uid)}<div class="title">${desc(r)} · ${range(r)}</div>
+      <div class="meta"><span>${workDays(r.from, r.to, r.half, r.uid)} working day(s)</span>${lu ? `<span>${lu.used} of ${allow} days taken in ${yr}</span>` : ''}${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
+      ${fl.length ? `<div class="meta"><span class="chip danger">Over the limit on ${esc(listDates(fl))}</span>${others.length ? `<span>Already away: ${esc(others.join(', '))}</span>` : ''}</div>` : ''}
+      ${wfhFlag(r)}</div>
+      <div class="acts">${btn('approve', 'Approve', r, 'approved', 'small ok')}${btn('approve', 'Decline', r, 'rejected', 'small no')}</div></div>`;
+    }).join('') : `<div class="empty">Nothing waiting. New requests from the team land here.</div>`);
+  }
+}
+
+function wfhFlag(r) {
+  if (r.type !== 'wfh' || (r.status !== 'pending' && r.status !== 'approved')) return '';
+  const ov = wfhOver(r.uid, r.from, r.to, r.id);
+  return ov.length ? `<div class="meta"><span class="chip danger">Over 1 WFH day a week: ${ov.map(o => `${o.n} days in week of ${esc(fmtShort(o.w))}`).join(', ')}</span></div>` : '';
+}
+function renderCalendar() {
+  if (!ready() || !S.admin) return;
+  const {byDate, flagged, max} = S.clash;
+  const t = todayKey();
+  const m0 = pkey(S.calMonth + '-01');
+  $('#bc-title').textContent = fmtMonth(S.calMonth);
+  const awayOn = k => {
+    const seen = new Set(), list = [];
+    for (const r of byDate.get(k) || []) if (!seen.has(r.uid)) { seen.add(r.uid); list.push(r); }
+    return list;
+  };
+  const chip = (r, long) => {
+    const fl = flagged.has(r.uid + '/' + r.id);
+    const label = long ? (r.type === 'wfh' ? 'WFH' : (CAT[r.category] || '') + ' leave') + (r.half ? ' ½' : '') + (r.status === 'pending' ? ' · pending' : '')
+      : esc(first(r.uid)) + (r.type === 'wfh' ? ' · WFH' : '') + (r.half ? ' ½' : '');
+    const title = `${nm(r.uid)}: ${r.type === 'wfh' ? 'Work from home' : (CAT[r.category] || '') + ' leave'}${r.status === 'pending' ? ' (awaiting approval)' : ''}${fl ? ' (over the daily limit)' : ''}`;
+    return `<span class="cchip ${r.type === 'wfh' ? 'wfh' : 'leave'} ${r.status === 'pending' ? 'pending' : ''} ${fl ? 'flag' : ''}" title="${esc(title)}">${long ? esc(label) : label}</span>`;
+  };
+  let html = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => `<div class="dow">${d}</div>`).join('');
+  for (let i = 0; i < (m0.getDay() + 6) % 7; i++) html += '<div class="day blank" aria-hidden="true"></div>';
+  let leaveDays = 0, wfhDays = 0, overDays = 0, pend = 0;
+  for (const k of monthDays(S.calMonth)) {
+    const d = pkey(k), sun = d.getDay() === 0, sat = d.getDay() === 6, list = sun ? [] : awayOn(k);
+    const over = list.length > max;
+    if (over) overDays++;
+    list.forEach(r => { if (r.type === 'wfh') wfhDays++; else leaveDays++; if (r.status === 'pending') pend++; });
+    list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const crew = sat ? satCrew(k) : [];
+    const satLine = sat ? `<span class="rota ${crew.length !== 2 ? 'short' : ''}" title="Saturday duty: Group ${satGroupOn(k)}${crew.length !== 2 ? ' (should be 2 people)' : ''}">G${satGroupOn(k)}: ${crew.length ? esc(crew.map(first).join(', ')) : 'no one assigned'}${crew.length && crew.length !== 2 ? ` (${crew.length})` : ''}</span>` : '';
+    html += `<div class="day ${sun || sat ? 'wk' : ''} ${k < t ? 'past' : ''} ${k === t ? 'today' : ''} ${over ? 'over' : ''}">
+      <div class="dhead"><span class="dn">${d.getDate()}</span>${sun ? '<span class="cnt">Off</span>' : list.length ? `<span class="cnt">${list.length} away</span>` : ''}</div>${satLine}${list.map(r => chip(r)).join('')}</div>`;
+  }
+  setHTML($('#bigcal'), html);
+  setHTML($('#cal-stats'), `<span class="chip leave">${leaveDays} leave day${leaveDays === 1 ? '' : 's'}</span><span class="chip wfh">${wfhDays} WFH day${wfhDays === 1 ? '' : 's'}</span>${pend ? `<span class="chip leave pending">${pend} awaiting approval</span>` : ''}${overDays ? `<span class="chip danger">${overDays} day${overDays === 1 ? '' : 's'} over the limit of ${max}</span>` : ''}`);
+  // next 30 days
+  let ag = '';
+  for (let i = 0; i <= 30; i++) {
+    const d = addDays(new Date(), i), k = dkey(d);
+    if (d.getDay() === 0) continue;
+    const list = awayOn(k);
+    if (!list.length) continue;
+    const rel = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : `in ${i} days`;
+    ag += `<div class="ad"><div class="adate"><span>${esc(fmtDay(k))}<span class="rel">${rel}</span></span><span class="cnt ${list.length > max ? 'over' : ''}">${list.length} away</span></div>
+      <div class="ppl">${list.map(r => `<div class="p">${who(r.uid, 20)}${chip(r, true)}</div>`).join('')}</div></div>`;
+  }
+  setHTML($('#upcoming'), ag || '<div class="empty">No leave or work-from-home booked in the next 30 days.</div>');
+}
+
+function renderTasks() {
+  if (!ready()) return;
+  const ppl = people();
+  // filter select
+  const fsel = $('#task-filter');
+  const fopts = `<option value="mine">My tasks</option><option value="all">Everyone</option>` + ppl.filter(id => id !== S.me).map(id => `<option value="${esc(id)}">${esc(nm(id))}</option>`).join('');
+  if (fsel._h !== fopts) { fsel.innerHTML = fopts; fsel._h = fopts; }
+  if (![...fsel.options].some(o => o.value === S.taskFilter)) S.taskFilter = 'mine';
+  fsel.value = S.taskFilter;
+  // assignee select
+  const wsel = $('#tk-who');
+  const wopts = (S.admin ? ppl : [S.me]).map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
+  if (wsel._h !== wopts) { const v = wsel.value; wsel.innerHTML = wopts; wsel._h = wopts; if ([...wsel.options].some(o => o.value === v)) wsel.value = v; }
+  $('#task-hint').textContent = S.admin ? 'You can assign tasks to anyone on the team.' : 'You can add tasks for yourself. Your manager assigns the rest.';
+
+  let list = allTasks();
+  if (S.taskFilter === 'mine') list = list.filter(x => x.uid === S.me);
+  else if (S.taskFilter !== 'all') list = list.filter(x => x.uid === S.taskFilter);
+  const showWho = S.taskFilter === 'all';
+  const cols = [['todo', 'To do'], ['doing', 'In progress'], ['done', 'Done']];
+  setHTML($('#board'), cols.map(([k, label]) => {
+    let items = list.filter(x => (x.status || 'todo') === k);
+    items = k === 'done' ? items.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)) : items.sort(taskSort);
+    const extra = k === 'done' && items.length > 15 ? items.length - 15 : 0;
+    if (extra) items = items.slice(0, 15);
+    return `<div class="col"><h3><span>${label}</span><span class="n">${list.filter(x => (x.status || 'todo') === k).length}</span></h3>
+      ${items.map(x => taskCard(x, showWho)).join('') || `<div class="empty" style="padding:8px 4px">${k === 'todo' ? 'Nothing to do here.' : k === 'doing' ? 'Nothing in progress.' : 'Nothing finished yet.'}</div>`}
+      ${extra ? `<div class="faint" style="padding:0 4px">${extra} older finished task${extra > 1 ? 's' : ''} hidden</div>` : ''}</div>`;
+  }).join(''));
+}
+function taskCard(x, showWho) {
+  const mayEdit = S.admin || x.uid === S.me;
+  const mayDel = S.admin || (x.uid === S.me && x.createdBy === S.me);
+  const st = x.status || 'todo';
+  const moves = !mayEdit ? '' : st === 'todo' ? btn('task-status', 'Start', x, 'doing') + btn('task-status', 'Done', x, 'done')
+    : st === 'doing' ? btn('task-status', 'Back to to-do', x, 'todo') + btn('task-status', 'Done', x, 'done')
+    : btn('task-status', 'Reopen', x, 'todo');
+  const by = x.createdBy && x.createdBy !== x.uid ? `<span>from ${esc(first(x.createdBy))}</span>` : '';
+  return `<div class="tcard ${st === 'done' ? 'done' : ''} ${x.priority === 'high' && st !== 'done' ? 'p-high' : ''}">
+    ${showWho || x.uid !== S.me ? who(x.uid, 20) : ''}
+    <div class="title">${esc(x.title)}</div>
+    ${x.notes ? `<div class="notes">${esc(x.notes)}</div>` : ''}
+    <div class="meta">${st !== 'done' ? dueChip(x) : `<span>Done ${x.doneAt ? esc(fmtShort(dkey(new Date(x.doneAt)))) : ''}</span>`}${x.priority === 'high' ? '<span class="chip danger nodot">High</span>' : x.priority === 'low' ? '<span class="chip nodot">Low</span>' : ''}${by}</div>
+    ${mayEdit || mayDel ? `<div class="acts">${moves}${mayDel ? btn('task-del', 'Delete', x, null, 'small ghost') : ''}</div>` : ''}
+  </div>`;
+}
+
+function monthDays(m) {
+  const d0 = pkey(m + '-01'), out = [];
+  for (let d = d0; d.getMonth() === d0.getMonth(); d = addDays(d, 1)) out.push(dkey(d));
+  return out;
+}
+function attForMonth(uid, m) {
+  if (m + '-01' >= windowStart()) {
+    const all = S.att.get(uid) || new Map();
+    return {map: new Map([...all].filter(([k]) => k.startsWith(m))), loading: false};
+  }
+  const key = uid + '|' + m;
+  if (S.tsCache.has(key)) return {map: S.tsCache.get(key), loading: false};
+  if (!S.tsLoading.has(key) && S.db) {
+    S.tsLoading.add(key);
+    const days = monthDays(m);
+    S.db.collection(`people/${uid}/attendance`).where('date', '>=', days[0]).where('date', '<=', days[days.length - 1]).get()
+      .then(s => { S.tsCache.set(key, new Map(s.docs.map(d => [d.id, d.data()]))); })
+      .catch(e => toast(errText(e), true))
+      .finally(() => { S.tsLoading.delete(key); renderAll(); });
+  }
+  return {map: new Map(), loading: true};
+}
+function timesheetRows(uid, m) {
+  const {map, loading} = attForMonth(uid, m);
+  const t = todayKey();
+  const rows = monthDays(m).filter(k => k <= t).map(k => {
+    const a = map.get(k), d = pkey(k);
+    const lv = reqOn(uid, k, 'leave');
+    let status, mode = '', inT = '', outT = '', hrs = null, cls = '', ex = 0, ot = '';
+    if (a && a.inAt) {
+      status = 'Present'; mode = a.mode === 'wfh' ? 'Home' : 'Office';
+      inT = fmtTime(a.inAt); outT = a.outAt ? fmtTime(a.outAt) : (k === t ? 'still in' : 'missing');
+      if (a.outAt) { hrs = (a.outAt - a.inAt) / 3600000; if (hrs < S.settings.hours && isWorkDay(uid, d)) cls = 'short'; ex = extraMs(uid, {...a, date: k}) / 3600000; ot = a.otTask || ''; }
+    } else if (lv) { status = (CAT[lv.category] || '') + ' leave' + (lv.half ? ' (½)' : ''); }
+    else if (!isWorkDay(uid, d)) { status = offLabel(d); cls = 'wk'; }
+    else { status = k === t ? 'Not in yet' : 'No record'; }
+    return {k, status, mode, inT, outT, hrs, cls, ex, ot};
+  });
+  return {rows, loading};
+}
+function renderTimesheet() {
+  if (!ready()) return;
+  const ppl = S.admin ? people() : [S.me];
+  const psel = $('#ts-person');
+  const opts = ppl.map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
+  if (psel._h !== opts) { psel.innerHTML = opts; psel._h = opts; }
+  if (!ppl.includes(S.ts.person)) S.ts.person = S.me;
+  psel.value = S.ts.person;
+  const mi = $('#ts-month'); if (mi.value !== S.ts.month) mi.value = S.ts.month; mi.max = mkey(new Date());
+  $('#ts-csv').hidden = !S.dl;
+  const {rows, loading} = timesheetRows(S.ts.person, S.ts.month);
+  if (loading) { setHTML($('#ts-table'), '<div class="empty">Loading that month…</div>'); setHTML($('#ts-sum'), ''); return; }
+  const present = rows.filter(r => r.status === 'Present');
+  const totalH = present.reduce((s, r) => s + (r.hrs || 0), 0);
+  const withH = present.filter(r => r.hrs != null);
+  const leaveDays = rows.filter(r => /leave/.test(r.status)).length;
+  setHTML($('#ts-sum'), `<div><b>${present.length}</b><span>Days worked</span></div><div><b>${present.filter(r => r.mode === 'Home').length}</b><span>From home</span></div>
+    <div><b>${fmtDur(totalH * 3600000)}</b><span>Total hours</span></div><div><b>${withH.length ? fmtDur(totalH / withH.length * 3600000) : '—'}</b><span>Average per day</span></div>
+    <div><b>${fmtDur(rows.reduce((s, r) => s + r.ex, 0) * 3600000)}</b><span>Extra hours</span></div><div><b>${pctHTML(officeStats(S.ts.person, S.ts.month + '-01', monthDays(S.ts.month).slice(-1)[0]).pct)}</b><span>Office attendance</span></div>`);
+  if (!rows.length) { setHTML($('#ts-table'), '<div class="empty">This month hasn\'t started yet.</div>'); return; }
+  setHTML($('#ts-table'), `<table><thead><tr><th>Date</th><th>Status</th><th>Where</th><th class="num">In</th><th class="num">Out</th><th class="num">Hours</th><th class="num">Extra</th><th>Overtime work</th></tr></thead><tbody>
+    ${rows.slice().reverse().map(r => `<tr class="${r.cls}"><td>${esc(fmtDay(r.k))}</td><td>${r.status === 'Present' ? '<span class="chip office nodot">Present</span>' : /leave/.test(r.status) ? `<span class="chip leave nodot">${esc(r.status)}</span>` : r.status === 'No record' ? `<span class="chip danger nodot">No record</span>` : esc(r.status)}</td>
+    <td>${esc(r.mode)}</td><td class="num">${esc(r.inT)}</td><td class="num">${r.outT === 'missing' ? '<span style="color:var(--danger)">missing</span>' : esc(r.outT)}</td><td class="num hrs">${r.hrs != null ? esc(fmtDur(r.hrs * 3600000)) : ''}</td><td class="num">${r.ex >= 0.25 ? `<b>+${esc(fmtDur(r.ex * 3600000))}</b>` : ''}</td><td>${esc(r.ot)}</td></tr>`).join('')}
+    </tbody></table>`);
+}
+
+function renderTeam() {
+  if (!ready()) return;
+  const ppl = people();
+  const year = String(new Date().getFullYear()), m = mkey(new Date());
+  const allow = Number(S.settings.allowance) || 0;
+  const tasks = allTasks();
+  $('#team-sub').textContent = `${ppl.length} ${ppl.length === 1 ? 'person' : 'people'}`;
+  const sg = S.settings.satGroup || {};
+  const satSel = id => `<select data-satgroup="${esc(id)}" aria-label="Saturday group" style="width:auto" ${canAct() ? '' : 'disabled'}><option value="">None</option>${[1, 2, 3, 4, 5].map(g => `<option value="${g}" ${Number(sg[id]) === g ? 'selected' : ''}>Group ${g}</option>`).join('')}</select>`;
+  const dnames = S.settings.displayNames || {};
+  const dnInput = id => `<input class="dn-input" data-dispname="${esc(id)}" value="${esc(dnames[id] || '')}" placeholder="${esc((S.names[id] && S.names[id].name) || 'Display name')}" aria-label="Display name" maxlength="40" ${canAct() ? '' : 'disabled'}>`;
+  setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Display name</th>' : ''}<th>Today</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
+    ${ppl.map(id => {
+      const s = todayStatus(id), lu = leaveUsed(id, year);
+      const wfh = [...(S.att.get(id)?.values() || [])].filter(a => a.date && a.date.startsWith(m) && a.mode === 'wfh').length;
+      const open = tasks.filter(x => x.uid === id && x.status !== 'done');
+      const over = open.filter(x => x.due && x.due < todayKey()).length;
+      return `<tr><td>${who(id)}</td>${S.admin ? `<td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num">${lu.used} / ${allow}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
+      ${S.admin ? `<td style="text-align:right">${id !== S.me ? btn('remove', 'Remove', {uid: id, id: id}, null, 'small ghost') : ''}</td>` : ''}</tr>`;
+    }).join('')}</tbody></table>` : '<div class="empty">No one has joined yet.</div>');
+  if (S.admin) {
+    const nf = (S.invites && S.invites.notFound) || [];
+    setHTML($('#invite-status'), S.inviteRunning ? '<div class="note" style="margin-top:12px">Adding your teammates to the board…</div>'
+      : nf.length ? `<div class="note warn" style="margin-top:12px">These addresses weren't found in your organization's directory yet: ${nf.map(esc).join(', ')}. The page tries again each time you open it, and anyone on the list joins by themselves when they open the link.</div>` : '');
+  }
+}
+
+function statsRange(p) {
+  const now = new Date(), t = todayKey();
+  if (p === 'week') return {from: dkey(addDays(now, -((now.getDay() + 6) % 7))), to: t};
+  if (p === 'month') return {from: mkey(now) + '-01', to: t};
+  return {from: dkey(addDays(now, -(Number(p) - 1))), to: t};
+}
+function renderStats() {
+  if (!ready() || !S.admin) return;
+  const {from, to} = statsRange($('#sp-period').value);
+  const inRange = ms => { if (!ms) return false; const k = dkey(new Date(ms)); return k >= from && k <= to; };
+  const t = todayKey(), tasks = allTasks();
+  const rows = people().map(id => {
+    const mine = tasks.filter(x => x.uid === id);
+    const done = mine.filter(x => x.status === 'done' && inRange(x.doneAt));
+    const withDue = done.filter(x => x.due);
+    const onTime = withDue.filter(x => dkey(new Date(x.doneAt)) <= x.due).length;
+    const open = mine.filter(x => x.status !== 'done');
+    const overdue = open.filter(x => x.due && x.due < t).length;
+    const spans = done.filter(x => x.createdAt).map(x => (x.doneAt - x.createdAt) / DAY);
+    const att = [...(S.att.get(id)?.values() || [])].filter(a => a.inAt && a.date >= from && a.date <= to);
+    const closed = att.filter(a => a.outAt);
+    const hours = closed.reduce((s, a) => s + (a.outAt - a.inAt) / 3600000, 0);
+    const inMins = att.map(a => { const d = new Date(a.inAt); return d.getHours() * 60 + d.getMinutes(); });
+    let leave = 0;
+    for (const r of allReqs()) if (r.uid === id && r.type === 'leave' && r.status === 'approved') eachWorkDay(r.from < from ? from : r.from, r.to > to ? to : r.to, () => { leave += r.half ? 0.5 : 1; }, id);
+    return {id, done: done.length, rate: withDue.length ? onTime / withDue.length : null, withDue: withDue.length, open: open.length, overdue,
+      avgDays: spans.length ? spans.reduce((a, b) => a + b, 0) / spans.length : null,
+      days: att.length, wfh: att.filter(a => a.mode === 'wfh').length, hours, closedN: closed.length, avgH: closed.length ? hours / closed.length : null,
+      avgIn: inMins.length ? inMins.reduce((a, b) => a + b, 0) / inMins.length : null, missing: att.filter(a => !a.outAt && a.date < t).length, leave,
+      extra: closed.reduce((s, a) => s + extraMs(id, a), 0) / 3600000, office: officeStats(id, from, to).pct};
+  });
+  const sum = (k) => rows.reduce((s, r) => s + (r[k] || 0), 0);
+  const allDue = sum('withDue'), allOnTime = rows.reduce((s, r) => s + (r.rate != null ? r.rate * r.withDue : 0), 0);
+  const allClosed = sum('closedN');
+  setHTML($('#stats-sum'), `<div><b>${sum('done')}</b><span>Tasks finished</span></div>
+    <div><b>${allDue ? Math.round(allOnTime / allDue * 100) + '%' : '—'}</b><span>Finished on time</span></div>
+    <div><b>${sum('overdue')}</b><span>Overdue right now</span></div>
+    <div><b>${allClosed ? fmtDur(sum('hours') / allClosed * 3600000) : '—'}</b><span>Average day</span></div>`);
+  const maxDone = Math.max(1, ...rows.map(r => r.done));
+  const rateCls = v => v >= 0.8 ? 'good' : v >= 0.5 ? 'mid' : 'low';
+  const hm = m => `${pad(Math.floor(m / 60))}:${pad(Math.round(m % 60))}`;
+  rows.sort((a, b) => b.done - a.done || nm(a.id).localeCompare(nm(b.id)));
+  setHTML($('#stats-table'), rows.length ? `<table><thead><tr><th>Person</th><th class="num">Tasks done</th><th class="num">On time</th><th class="num">Avg days to finish</th><th class="num">Open</th><th class="num">Overdue</th>
+    <th class="num">Days worked</th><th class="num">WFH</th><th class="num">Leave</th><th class="num">Hours</th><th class="num">Avg / day</th><th class="num">Extra hrs</th><th class="num">Office %</th><th class="num">Avg check-in</th><th class="num">Missed check-outs</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${who(r.id)}</td>
+      <td class="num"><span class="bar"><i style="width:${Math.round(r.done / maxDone * 60)}px"></i>${r.done}</span></td>
+      <td class="num">${r.rate == null ? '<span class="faint">—</span>' : `<span class="rate ${rateCls(r.rate)}">${Math.round(r.rate * 100)}%</span>`}</td>
+      <td class="num">${r.avgDays == null ? '<span class="faint">—</span>' : r.avgDays.toFixed(1)}</td>
+      <td class="num">${r.open}</td><td class="num" ${r.overdue ? 'style="color:var(--danger)"' : ''}>${r.overdue}</td>
+      <td class="num">${r.days}</td><td class="num">${r.wfh}</td><td class="num">${r.leave}</td>
+      <td class="num">${r.hours ? fmtDur(r.hours * 3600000) : '<span class="faint">—</span>'}</td>
+      <td class="num ${r.avgH != null && r.avgH < S.settings.hours ? 'rate mid' : ''}">${r.avgH == null ? '<span class="faint">—</span>' : fmtDur(r.avgH * 3600000)}</td>
+      <td class="num">${r.extra >= 0.25 ? fmtDur(r.extra * 3600000) : '<span class="faint">—</span>'}</td>
+      <td class="num">${pctHTML(r.office)}</td>
+      <td class="num">${r.avgIn == null ? '<span class="faint">—</span>' : hm(r.avgIn)}</td>
+      <td class="num" ${r.missing ? 'style="color:var(--danger)"' : ''}>${r.missing}</td></tr>`).join('')}
+    </tbody></table>` : '<div class="empty">No one on the team yet.</div>');
+}
+const CYC = ['Jan–Feb', 'Mar–Apr', 'May–Jun', 'Jul–Aug', 'Sep–Oct', 'Nov–Dec'];
+const cycOf = k => Math.floor(pkey(k).getMonth() / 2);
+function renderBonding() {
+  if (!ready()) return;
+  const y = S.bdYear, t = todayKey(), now = new Date(), cy = now.getFullYear(), cc = cycOf(t);
+  $('#bd-title').textContent = `Team bonding · ${y}`;
+  const ev = [...S.events].map(([id, e]) => ({id, ...e})).filter(e => typeof e.date === 'string').sort((a, b) => a.date.localeCompare(b.date));
+  setHTML($('#bd-cycles'), CYC.map((name, i) => {
+    const inC = ev.filter(e => e.date.startsWith(String(y)) && cycOf(e.date) === i);
+    const done = inC.filter(e => e.date <= t), plan = inC.filter(e => e.date > t);
+    const past = y < cy || (y === cy && i < cc), cur = y === cy && i === cc;
+    const st = done.length ? '<span class="chip office">Done</span>' : plan.length ? `<span class="chip accent">Planned ${esc(fmtShort(plan[0].date))}</span>`
+      : past && (!ev.length || dkey(new Date(y, i * 2 + 2, 0)) < ev[0].date) ? '<span class="chip nodot">No record</span>' : past ? '<span class="chip danger">Missed</span>' : cur ? '<span class="chip leave">Due now</span>' : '<span class="chip">Upcoming</span>';
+    return `<div class="cyc ${cur ? 'cur' : ''}"><h3>${name}</h3>${st}<span class="what">${inC.map(e => esc(e.title)).join(', ') || 'No activity'}</span></div>`;
+  }).join(''));
+  const curDone = ev.some(e => e.date.startsWith(String(cy)) && cycOf(e.date) === cc);
+  const cycEnd = dkey(new Date(cy, cc * 2 + 2, 0));
+  setHTML($('#bd-status'), curDone ? `<div class="note">This cycle (${CYC[cc]}) has an activity. The next one is due in ${CYC[(cc + 1) % 6]}.</div>`
+    : `<div class="note warn"><b>No team bonding activity yet for ${CYC[cc]} ${cy}.</b> Plan one on or before ${esc(fmtDay(cycEnd))}.</div>`);
+  setHTML($('#ev-list'), ev.length ? ev.slice().reverse().map(e => `<div class="item"><div class="main"><div class="title">${esc(e.title)}</div>
+    <div class="meta"><span class="mono">${esc(fmtDay(e.date))} ${esc(e.date.slice(0, 4))}</span>${e.date > t ? '<span class="chip accent nodot">Planned</span>' : ''}<span>${Array.isArray(e.attendees) ? e.attendees.length : 0} of ${people().length} attended</span>${e.notes ? `<span>${esc(e.notes)}</span>` : ''}</div></div>
+    <div class="acts">${S.admin ? btn('ev-del', 'Delete', {uid: '', id: e.id}, null, 'small ghost') : ''}</div></div>`).join('')
+    : '<div class="empty">No activities yet.</div>');
+  if (S.admin) setHTML($('#ev-who'), people().map(id => `<label class="check"><input type="checkbox" value="${esc(id)}" checked> ${esc(nm(id))}</label>`).join(''));
+}
+function updateForms() {
+  const on = canAct();
+  for (const id of ['apply-fs', 'task-fs', 'settings-fs', 'entry-fs']) $('#' + id).disabled = !on;
+  if (S.admin && ready()) {
+    const esel = $('#en-who');
+    const eopts = people().map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
+    if (esel._h !== eopts) { const v = esel.value; esel.innerHTML = eopts; esel._h = eopts; if ([...esel.options].some(o => o.value === v)) esel.value = v; }
+  }
+  $('#add-q').disabled = !on;
+  $('#tk-who').disabled = !on || !S.admin;
+  $$('[data-type]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === S.applyType)));
+  $('#cat-field').hidden = S.applyType !== 'leave';
+  const f = $('#ap-from').value, tt = $('#ap-to').value;
+  $('#half-field').hidden = !(f && f === tt);
+  if ($('#half-field').hidden) $('#ap-half').checked = false;
+  const n = workDays(f, tt || f, $('#ap-half').checked, S.me);
+  $('#ap-count').textContent = f ? (n ? `${n} working day${n === 1 ? '' : 's'}` : 'Those dates are your days off') : '';
+  const cl = ready() && f ? holdClash(f, tt || f, null) : [];
+  const box = $('#ap-clash');
+  box.hidden = !cl.length;
+  const html = cl.length ? `<b>Heads up:</b> ${cl.length === 1 ? `${cl[0].n} people have` : `${maxAway()} or more people have`} already asked for leave or WFH on <b>${esc(listDates(cl.map(x => x.k)))}</b>. You can still send this request, but it will be flagged in red for your manager.` : '';
+  if (box._h !== html) { box.innerHTML = html; box._h = html; }
+  const wb = $('#ap-wfh');
+  const wo = ready() && f && S.applyType === 'wfh' ? wfhOver(S.me, f, tt || f, null) : [];
+  wb.hidden = !wo.length;
+  const wh = wo.length ? `<b>Team rule: 1 work-from-home day per week.</b> This would make ${wo.map(o => `${o.n} WFH days in the week of ${esc(fmtShort(o.w))}`).join(', ')}. You can still send it, but your manager will see it flagged.` : '';
+  if (wb._h !== wh) { wb.innerHTML = wh; wb._h = wh; }
+  $('#ev-fs').disabled = !on;
+}
+function $$(s) { return [...document.querySelectorAll(s)]; }
+
+let lastNamesCall = 0;
+function refreshNames() {
+  if (!S.user || !S.me) return;
+  const ids = new Set([S.me, ...S.roster.keys()]);
+  for (const t of allTasks()) if (t.createdBy) ids.add(t.createdBy);
+  for (const m of S.appr.values()) for (const a of m.values()) if (a.by) ids.add(a.by);
+  const list = [...ids].filter(Boolean);
+  const call = ++lastNamesCall;
+  S.user.profiles(list).then(ps => {
+    if (call !== lastNamesCall) return;
+    const sig = list.map(i => (ps[i] && ps[i].name || '') + ':' + (ps[i] && ps[i].avatarUrl ? 1 : 0)).join('|');
+    S.names = ps;
+    if (sig !== S.nameSig) { S.nameSig = sig; renderAll(); }
+  }).catch(() => {});
+}
+
+/* ---------- data ---------- */
+function onErr(e) {
+  if (e && (e.code === 'revoked' || e.code === 'unavailable')) { S.status = 'error'; renderAll(); }
+  else toast(errText(e), true);
+}
+function subUser(uid) {
+  const base = S.db.doc('people/' + uid);
+  const un = [];
+  un.push(base.collection('attendance').where('date', '>=', windowStart()).onSnapshot(s => { S.att.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
+  un.push(base.collection('tasks').onSnapshot(s => { S.tasks.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
+  // Leave requests and decisions are private: each person reads their own, the manager reads everyone's.
+  if (S.admin || uid === S.me) {
+    un.push(S.db.collection(`leave/${uid}/requests`).onSnapshot(s => { S.reqs.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
+    un.push(S.db.collection(`approvals/${uid}/items`).onSnapshot(s => { S.appr.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
+  }
+  S.subs.set(uid, un);
+}
+function unsubUser(uid) {
+  (S.subs.get(uid) || []).forEach(u => { try { u(); } catch (e) {} });
+  S.subs.delete(uid); S.att.delete(uid); S.reqs.delete(uid); S.tasks.delete(uid); S.appr.delete(uid);
+}
+/* Adds the teammate emails the manager listed (kept in a manager-only record) to the board, once per visit. */
+const lc = e => String(e || '').trim().toLowerCase();
+/* Manager adds an already-approved leave or WFH entry for someone (also used for the one-time import). */
+async function addApprovedEntry(uid, e) {
+  const half = false, at = e.at || Date.now();
+  const hold = S.db.collection('holds').doc();
+  await hold.set({from: e.from, to: e.to, type: e.type, half, at, days: holdDays(e.from, e.to, half, uid)});
+  const ref = S.db.collection(`leave/${uid}/requests`).doc();
+  try {
+    await ref.set({type: e.type, category: e.type === 'leave' ? (e.category || 'casual') : null, from: e.from, to: e.to, half, reason: e.reason || '', createdAt: at, holdId: hold.id, addedBy: S.me});
+    await S.db.doc(`approvals/${uid}/items/${ref.id}`).set({decision: 'approved', type: e.type, from: e.from, to: e.to, half, by: S.me, at});
+  } catch (err) { await hold.delete().catch(() => {}); throw err; }
+}
+async function maybeImport() {
+  if (!S.admin || S.inviteRunning || S.inviteDone || !S.invites || !ready() || S.ro || !S.user) return;
+  const inv = S.invites;
+  const emails = [...new Set([...(inv.emails || []), ...(inv.satGroups || []).map(g => g.email), ...(inv.seed || []).map(s => s.email)].map(lc).filter(Boolean))];
+  if (!emails.length) { S.inviteDone = true; return; }
+  S.inviteRunning = true; renderAll();
+  const idOf = {}, notFound = []; let added = 0;
+  for (const email of emails) {
+    let hits = [];
+    try { hits = await S.user.search(email); } catch (e) {}
+    let hit = hits.find(h => h.email && h.email.toLowerCase() === email);
+    if (!hit && hits.length === 1 && !hits[0].email) hit = hits[0];
+    if (!hit) { notFound.push(email); continue; }
+    idOf[email] = hit.id;
+    const ex = S.roster.get(hit.id);
+    try {
+      if (!ex) { await S.db.doc('people/' + hit.id).set({joined: Date.now(), addedBy: S.me}); added++; }
+      else if (ex.removed) { await S.db.doc('people/' + hit.id).update({removed: false}); added++; }
+    } catch (e) { notFound.push(email); delete idOf[email]; }
+  }
+  // Saturday groups
+  const groupsLeft = (inv.satGroups || []).filter(g => !idOf[lc(g.email)]);
+  const groupsNow = (inv.satGroups || []).filter(g => idOf[lc(g.email)]);
+  if (groupsNow.length) {
+    const sg = {...(S.settings.satGroup || {})};
+    groupsNow.forEach(g => { sg[idOf[lc(g.email)]] = Number(g.group); });
+    S.settings = {...S.settings, satGroup: sg};
+    try { await S.db.doc('settings/team').set({...S.settings}); } catch (e) {}
+  }
+  // Entries the manager asked to pre-fill (added as approved, skipped if already there)
+  const seedLeft = [];
+  for (const sd of inv.seed || []) {
+    const uid = idOf[lc(sd.email)];
+    if (!uid) { seedLeft.push(sd); continue; }
+    try {
+      const ex = await S.db.collection(`leave/${uid}/requests`).where('from', '==', sd.from).get();
+      if (ex.docs.some(d => { const x = d.data(); return x.type === sd.type && x.to === sd.to && !x.cancelled; })) continue;
+      await addApprovedEntry(uid, sd);
+    } catch (e) { seedLeft.push(sd); }
+  }
+  const stillMissing = notFound.filter(e => !idOf[e]);
+  try { await S.db.doc('invites/list').set({emails: stillMissing, notFound: stillMissing, satGroups: groupsLeft, seed: seedLeft, checkedAt: Date.now()}); } catch (e) {}
+  S.inviteRunning = false; S.inviteDone = true;
+  if (added) toast(`Added ${added} teammate${added === 1 ? '' : 's'} to the board`);
+  renderAll();
+}
+async function ensureRegistered() {
+  if (S.registering || S.roster.has(S.me) || S.ro) return;
+  S.registering = true;
+  try { await S.db.doc('people/' + S.me).set({joined: Date.now(), name: (window.TD && window.TD.nameOf[S.me]) || ''}); }
+  catch (e) { if (e && e.code === 'invalid_argument') { S.ro = true; renderAll(); } }
+}
+/* Managers put everyone from config.js on the board, so tasks and Saturday groups can be set before people sign in. */
+let seeded = false;
+async function seedRoster() {
+  if (seeded || !S.admin || S.ro || !window.TD) return;
+  seeded = true;
+  for (const [id, name] of Object.entries(window.TD.nameOf)) {
+    if (S.roster.has(id)) continue;
+    try { await S.db.doc('people/' + id).set({joined: Date.now(), name, addedBy: S.me}); } catch (e) {}
+  }
+}
+function subscribeCore() {
+  const timer = setTimeout(() => { if (S.status === 'loading') { S.status = 'offline'; renderAll(); } }, 10000);
+  S.db.collection('people').onSnapshot(snap => {
+    const seen = new Set();
+    snap.docs.forEach(d => { seen.add(d.id); S.roster.set(d.id, d.data()); if (!S.subs.has(d.id)) subUser(d.id); });
+    for (const id of [...S.roster.keys()]) if (!seen.has(id)) { S.roster.delete(id); unsubUser(id); }
+    if (!snap.metadata.fromCache) {
+      clearTimeout(timer);
+      if (S.status === 'loading' || S.status === 'offline') S.status = 'ready';
+      ensureRegistered();
+      seedRoster();
+      maybeImport();
+    }
+    renderAll();
+  }, e => { clearTimeout(timer); S.status = 'error'; renderAll(); });
+  S.db.collection('holds').onSnapshot(s => { S.holds = new Map(s.docs.map(d => [d.id, d.data()])); renderAll(); }, onErr);
+  S.db.doc('settings/team').onSnapshot(s => {
+    if (s.exists) S.settings = {...S.settings, ...s.data()};
+    if (document.activeElement !== $('#st-allow')) $('#st-allow').value = S.settings.allowance;
+    if (document.activeElement !== $('#st-hours')) $('#st-hours').value = S.settings.hours;
+    if (document.activeElement !== $('#st-max')) $('#st-max').value = maxAway();
+    if (document.activeElement !== $('#st-anchor')) $('#st-anchor').value = S.settings.satAnchor || '2026-11-21';
+    if (document.activeElement !== $('#st-anchor-group')) $('#st-anchor-group').value = String(Number(S.settings.satAnchorGroup) || 1);
+    renderAll();
+  }, onErr);
+  S.db.collection('events').onSnapshot(s => { S.events = new Map(s.docs.map(d => [d.id, d.data()])); renderAll(); }, onErr);
+  if (S.admin) S.db.doc('invites/list').onSnapshot(s => { S.invites = s.exists ? s.data() : null; maybeImport(); renderAll(); }, onErr);
+}
+
+/* ---------- actions ---------- */
+const tdoc = (uid, id) => S.db.doc(`people/${uid}/tasks/${id}`);
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (!b || b.disabled) return;
+  const {act, uid, id, status} = b.dataset;
+  const t = todayKey();
+  if (act === 'mode') { S.mode = b.dataset.mode; renderAll(); return; }
+  if (!canAct()) return;
+  if (act === 'checkin') {
+    const home = (S.mode || 'office') === 'wfh';
+    const n = home ? [...wfhDays(S.me, t, null)].filter(k => k !== t).length + 1 : 0;
+    guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).set({date: t, inAt: Date.now(), outAt: null, mode: S.mode || 'office'}),
+      n > 1 ? `Checked in. This is your ${ordinal(n)} WFH day this week (team rule: 1).` : 'Checked in');
+  }
+  else if (act === 'ot-save') {
+    const v = ($('#ot-task')?.value || '').trim().slice(0, 200);
+    if (!v) { toast('Write what you worked on.', true); return; }
+    guard(() => S.db.doc(`people/${S.me}/attendance/${b.dataset.date}`).update({otTask: v}), 'Overtime work saved');
+  }
+  else if (act === 'checkout') guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: Date.now()}), 'Checked out. See you tomorrow.');
+  else if (act === 'undo-out') guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: null}), 'Check-out undone');
+  else if (act === 'fix-out') {
+    const date = b.dataset.date, v = $('#fix-' + date).value;
+    const a = S.att.get(S.me)?.get(date);
+    if (!v || !a) return;
+    const [h, mi] = v.split(':').map(Number);
+    const d = pkey(date); d.setHours(h, mi, 0, 0);
+    if (d.getTime() <= a.inAt) { toast('Check-out has to be after your check-in time.', true); return; }
+    guard(() => S.db.doc(`people/${S.me}/attendance/${date}`).update({outAt: d.getTime(), corrected: true}), 'Check-out saved');
+  }
+  else if (act === 'task-status') guard(() => tdoc(uid, id).update({status, updatedAt: Date.now(), doneAt: status === 'done' ? Date.now() : null}), status === 'done' ? 'Marked done' : 'Task updated');
+  else if (act === 'task-del' || act === 'remove' || act === 'req-cancel' || act === 'ev-del') {
+    if (b.dataset.armed !== '1') {
+      b.dataset.armed = '1'; b.classList.add('armed'); const old = b.textContent; b.textContent = 'Click again to confirm';
+      setTimeout(() => { if (b.isConnected) { b.dataset.armed = ''; b.classList.remove('armed'); b.textContent = old; } }, 3500);
+      return;
+    }
+    if (act === 'task-del') guard(() => tdoc(uid, id).delete(), 'Task deleted');
+    else if (act === 'ev-del') guard(() => S.db.doc('events/' + id).delete(), 'Activity deleted');
+    else if (act === 'remove') guard(() => S.db.doc('people/' + uid).update({removed: true}), 'Removed from the board');
+    else {
+      const r = S.reqs.get(uid)?.get(id);
+      guard(async () => {
+        await S.db.doc(`leave/${uid}/requests/${id}`).update({cancelled: true, cancelledAt: Date.now()});
+        if (r && r.holdId) await S.db.doc('holds/' + r.holdId).delete().catch(() => {});
+      }, 'Request cancelled');
+    }
+  }
+  else if (act === 'approve') {
+    const r = S.reqs.get(uid)?.get(id); if (!r) return;
+    guard(async () => {
+      await S.db.doc(`approvals/${uid}/items/${id}`).set({decision: status, type: r.type, from: r.from, to: r.to, half: !!r.half, by: S.me, at: Date.now()});
+      if (status === 'rejected' && r.holdId) await S.db.doc('holds/' + r.holdId).delete().catch(() => {});
+    }, status === 'approved' ? 'Approved' : 'Declined');
+  }
+  else if (act === 'add-person') {
+    const ex = S.roster.get(uid);
+    guard(() => ex ? S.db.doc('people/' + uid).update({removed: false}) : S.db.doc('people/' + uid).set({joined: Date.now(), addedBy: S.me}), 'Added to the team');
+    $('#add-q').value = ''; setHTML($('#add-results'), '');
+  }
+});
+
+$$('[data-type]').forEach(b => b.addEventListener('click', () => { S.applyType = b.dataset.type; updateForms(); }));
+['ap-from', 'ap-to', 'ap-half'].forEach(id => $('#' + id).addEventListener('input', () => {
+  const f = $('#ap-from'), tt = $('#ap-to');
+  tt.min = f.value;
+  if (f.value && (!tt.value || tt.value < f.value)) tt.value = f.value;
+  updateForms();
+}));
+$('#apply-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!canAct()) return;
+  const from = $('#ap-from').value, to = $('#ap-to').value || from, half = $('#ap-half').checked && from === to;
+  if (!from) { toast('Pick a start date.', true); return; }
+  if (to < from) { toast('The end date is before the start date.', true); return; }
+  if (!workDays(from, to, half, S.me)) { toast('Those dates are all your days off (Sunday, or a Saturday you are not on duty).', true); return; }
+  const clash = allReqs().find(r => r.uid === S.me && (r.status === 'pending' || r.status === 'approved') && r.from <= to && from <= r.to);
+  if (clash) { toast(`You already have a request covering ${fmtShort(clash.from)}${clash.to !== clash.from ? '–' + fmtShort(clash.to) : ''}. Cancel it first to change the dates.`, true); return; }
+  const clashes = holdClash(from, to, null);
+  const now = Date.now(), type = S.applyType;
+  const hold = S.db.collection('holds').doc();
+  const ok = await guard(async () => {
+    // An anonymous "hold" lets everyone count how many people are away on a date without seeing who.
+    await hold.set({from, to, type, half, at: now, days: holdDays(from, to, half, S.me)});
+    try {
+      await S.db.collection(`leave/${S.me}/requests`).add({
+        type, category: type === 'leave' ? $('#ap-cat').value : null,
+        from, to, half, reason: $('#ap-reason').value.trim().slice(0, 300), createdAt: now, holdId: hold.id
+      });
+    } catch (err) { await hold.delete().catch(() => {}); throw err; }
+  }, clashes.length ? 'Request sent. It is flagged because others are already away that day.' : 'Request sent for approval');
+  if (ok) { $('#ap-reason').value = ''; $('#ap-half').checked = false; }
+});
+$('#task-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!canAct()) return;
+  const title = $('#tk-title').value.trim();
+  if (!title) { toast('Write what the task is.', true); $('#tk-title').focus(); return; }
+  const whoId = S.admin ? $('#tk-who').value : S.me;
+  if (!whoId) return;
+  const ok = await guard(() => S.db.collection(`people/${whoId}/tasks`).add({
+    title: title.slice(0, 140), notes: $('#tk-notes').value.trim().slice(0, 600), due: $('#tk-due').value || null,
+    priority: $('#tk-pri').value, status: 'todo', createdBy: S.me, createdAt: Date.now(), updatedAt: Date.now()
+  }), whoId === S.me ? 'Task added' : `Task assigned to ${first(whoId)}`);
+  if (ok) { $('#tk-title').value = ''; $('#tk-notes').value = ''; $('#tk-due').value = ''; $('#tk-pri').value = 'normal'; }
+});
+$('#settings-form').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!canAct() || !S.admin) return;
+  const allowance = Math.max(0, Math.min(60, Number($('#st-allow').value) || 0));
+  const hours = Math.max(1, Math.min(14, Number($('#st-hours').value) || 8));
+  const max = Math.max(1, Math.min(20, Math.round(Number($('#st-max').value) || 2)));
+  const anchor = $('#st-anchor').value || S.settings.satAnchor || '2026-11-21';
+  if (pkey(anchor).getDay() !== 6) { toast('Pick a Saturday for the rota start.', true); return; }
+  const anchorGroup = Number($('#st-anchor-group').value) || 1;
+  guard(() => S.db.doc('settings/team').set({...S.settings, allowance, hours, maxAway: max, satAnchor: anchor, satAnchorGroup: anchorGroup}), 'Settings saved');
+});
+document.addEventListener('change', e => {
+  const dn = e.target.closest && e.target.closest('[data-dispname]');
+  if (dn && canAct() && S.admin) {
+    const names = {...(S.settings.displayNames || {})}, v = dn.value.trim().slice(0, 40);
+    if (v) names[dn.dataset.dispname] = v; else delete names[dn.dataset.dispname];
+    guard(() => S.db.doc('settings/team').set({...S.settings, displayNames: names}), 'Display name saved');
+    return;
+  }
+  const sel = e.target.closest && e.target.closest('[data-satgroup]');
+  if (!sel || !canAct() || !S.admin) return;
+  const sg = {...(S.settings.satGroup || {})};
+  if (sel.value) sg[sel.dataset.satgroup] = Number(sel.value); else delete sg[sel.dataset.satgroup];
+  guard(() => S.db.doc('settings/team').set({...S.settings, satGroup: sg}), 'Saturday group saved');
+});
+['en-from', 'en-to'].forEach(id => $('#' + id).addEventListener('input', () => {
+  const f = $('#en-from'), tt = $('#en-to'); tt.min = f.value;
+  if (f.value && (!tt.value || tt.value < f.value)) tt.value = f.value;
+}));
+$('#en-type').addEventListener('change', () => { $('#en-cat-field').hidden = $('#en-type').value !== 'leave'; });
+$('#entry-form').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!canAct() || !S.admin) return;
+  const uid = $('#en-who').value, from = $('#en-from').value, to = $('#en-to').value || from, type = $('#en-type').value;
+  if (!uid || !from) { toast('Pick a person and a start date.', true); return; }
+  if (to < from) { toast('The end date is before the start date.', true); return; }
+  if (!workDays(from, to, false, uid)) { toast(`Those dates are all ${first(uid)}'s days off.`, true); return; }
+  guard(() => addApprovedEntry(uid, {type, category: $('#en-cat').value, from, to}), `Added ${type === 'wfh' ? 'WFH' : 'leave'} for ${first(uid)}`);
+});
+$('#task-filter').addEventListener('change', e => { S.taskFilter = e.target.value; renderAll(); });
+$('#bd-prev').addEventListener('click', () => { S.bdYear--; renderAll(); });
+$('#bd-next').addEventListener('click', () => { S.bdYear++; renderAll(); });
+$('#ev-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!canAct() || !S.admin) return;
+  const date = $('#ev-date').value, title = $('#ev-title').value.trim();
+  if (!date || !title) { toast('Pick a date and name the activity.', true); return; }
+  const attendees = $$('#ev-who input:checked').map(i => i.value);
+  const ok = await guard(() => S.db.collection('events').add({date, title: title.slice(0, 80), notes: $('#ev-notes').value.trim().slice(0, 200), attendees, createdBy: S.me, createdAt: Date.now()}), 'Activity saved');
+  if (ok) { $('#ev-title').value = ''; $('#ev-notes').value = ''; S.bdYear = Number(date.slice(0, 4)); }
+});
+$('#sp-period').addEventListener('change', renderAll);
+$('#ts-person').addEventListener('change', e => { S.ts.person = e.target.value; renderAll(); });
+$('#ts-month').addEventListener('change', e => { if (e.target.value) { S.ts.month = e.target.value; renderAll(); } });
+$('#cal-prev').addEventListener('click', () => { const d = pkey(S.calMonth + '-01'); d.setMonth(d.getMonth() - 1); S.calMonth = mkey(d); renderAll(); });
+$('#cal-next').addEventListener('click', () => { const d = pkey(S.calMonth + '-01'); d.setMonth(d.getMonth() + 1); S.calMonth = mkey(d); renderAll(); });
+$('#cal-today').addEventListener('click', () => { S.calMonth = mkey(new Date()); renderAll(); });
+$('#ts-csv').addEventListener('click', async () => {
+  if (!S.dl) return;
+  const {rows, loading} = timesheetRows(S.ts.person, S.ts.month);
+  if (loading) return;
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = ['Date,Status,Where,Check in,Check out,Hours,Extra hours,Overtime work'].concat(rows.map(r => [r.k, r.status, r.mode, r.inT, r.outT, r.hrs != null ? r.hrs.toFixed(2) : '', r.ex ? r.ex.toFixed(2) : '', r.ot].map(q).join(','))).join('\n');
+  const name = nm(S.ts.person).replace(/[^\w-]+/g, '-').replace(/^-|-$/g, '') || 'person';
+  try { await S.dl.save({filename: `timesheet-${name}-${S.ts.month}.csv`, data: csv}); }
+  catch (e) { if (e && e.code !== 'declined') toast("Couldn't prepare the download here.", true); }
+});
+const addQ = $('#add-q');
+function runSearch() {
+  if (!S.user || !S.admin) return;
+  S.user.search(addQ.value.trim()).then(hits => {
+    const active = new Set(people());
+    setHTML($('#add-results'), hits.filter(h => h.id && !active.has(h.id)).map(h => `<div class="item"><span class="who">${h.avatarUrl ? `<img class="av" width="24" height="24" style="width:24px;height:24px" src="${esc(h.avatarUrl)}" alt="">` : ''}<span class="nm">${esc(h.name)}</span></span>
+      <div class="acts"><button class="btn small" type="button" data-act="add-person" data-uid="${esc(h.id)}">Add</button></div></div>`).join('')
+      || (addQ.value.trim() ? '<div class="empty">No one new matches that name.</div>' : ''));
+  });
+}
+addQ.addEventListener('input', runSearch);
+addQ.addEventListener('focus', runSearch);
+
+/* ---------- routing ---------- */
+const VIEWS = ['calendar', 'today', 'leave', 'tasks', 'timesheet', 'team', 'bonding', 'stats'];
+const MANAGER_VIEWS = ['calendar', 'stats'];
+function route() {
+  const h = location.hash.slice(1);
+  const allowed = S.admin ? VIEWS : VIEWS.filter(v => !MANAGER_VIEWS.includes(v));
+  S.view = allowed.includes(h) ? h : (S.admin ? 'calendar' : 'today');
+  VIEWS.forEach(v => { $('#view-' + v).hidden = v !== S.view; });
+  $$('.tabs a').forEach(a => { if (a.dataset.view === S.view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+}
+window.addEventListener('hashchange', route);
+
+/* ---------- boot ---------- */
+async function boot() {
+  route();
+  $('#ap-from').value = todayKey(); $('#ap-to').value = todayKey(); $('#ap-to').min = todayKey();
+  $('#st-allow').value = S.settings.allowance; $('#st-hours').value = S.settings.hours; $('#st-max').value = S.settings.maxAway; $('#st-anchor').value = '2026-11-21';
+  $('#en-from').value = todayKey(); $('#en-to').value = todayKey(); $('#ev-date').value = todayKey();
+  renderAll();
+  setInterval(renderAll, 30000);
+  const c = window.claude;
+  if (!c || typeof c.use !== 'function') { S.status = 'nodb'; renderAll(); return; }
+  let db = null, user = null, dl = null;
+  try { [db, user, dl] = await Promise.all([c.use('db'), c.use('user'), c.use('downloads')]); } catch (e) {}
+  S.user = user; S.dl = dl;
+  if (!db || !user) { S.status = 'nodb'; renderAll(); return; }
+  S.db = db;
+  const me = await user.me();
+  S.me = me.id; S.admin = !!me.canEdit;
+  if (!S.me) { S.status = 'nodb'; renderAll(); return; }
+  if ((await user.can('data.write')) === false) S.ro = true;
+  document.body.classList.toggle('is-admin', S.admin);
+  if (!S.ts.person) S.ts.person = S.me;
+  S.ts.person = S.me;
+  route();
+  subscribeCore();
+  renderAll();
+}
+boot();
+})();
+</script>
+
+</body>
+</html>

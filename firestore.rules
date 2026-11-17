@@ -1,0 +1,100 @@
+rules_version = '2';
+
+// Team Desk database rules.
+// Paste into Firebase console > Firestore Database > Rules, then press Publish.
+//
+//   Everyone on the team (verified @1cell.ai email) can SEE attendance, tasks, the roster,
+//   settings and team bonding.
+//   Each person can CHANGE only their own check-ins, their own tasks' status, and their own
+//   leave/WFH requests. Leave/WFH requests are visible only to that person and managers.
+//   Managers (admins) can approve leave, assign tasks, change settings and plan team bonding.
+//
+// >>> Keep team() and admins() identical to config.js. Keys are the names in lowercase. <<<
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function team() {
+      return {
+        'sumit':        'sumit.halder@1cell.ai',
+        'gagan':        'gagan.kumar@1cell.ai',
+        'uzma':         'uzma.farooque@1cell.ai',
+        'shivani':      'shivani.rai@1cell.ai',
+        'ankit':        'ankit.yadav@1cell.ai',
+        'viki':         'vicky.jha@1cell.ai',
+        'moumitha':     'moumita.roy@1cell.ai',
+        'aparna':       'aparna.sornapudi@1cell.ai',
+        'chinmay':      'chinmay.koppal@1cell.ai',
+        'surbhi':       'surabhi.pednekar@1cell.ai'
+      };
+    }
+
+    function admins() {
+      return ['gagan.kumar@1cell.ai'];
+    }
+
+    function myEmail() { return request.auth.token.email.lower(); }
+
+    function isTeam() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && myEmail().matches('.*@1cell[.]ai$');
+    }
+
+    function isAdmin() { return isTeam() && myEmail() in admins(); }
+
+    // true when person id `pid` belongs to the signed-in person
+    function isMe(pid) { return isTeam() && team().get(pid, '') == myEmail(); }
+
+    // Roster
+    match /people/{pid} {
+      allow read: if isTeam();
+      allow write: if isAdmin() || isMe(pid);
+
+      // Check-in / check-out, one document per day
+      match /attendance/{day} {
+        allow read: if isTeam();
+        allow write: if isAdmin() || isMe(pid);
+      }
+
+      // Tasks assigned to this person
+      match /tasks/{tid} {
+        allow read: if isTeam();
+        allow create: if isAdmin() || (isMe(pid) && request.resource.data.createdBy == pid);
+        allow update: if isAdmin() || isMe(pid);
+        allow delete: if isAdmin() || (isMe(pid) && resource.data.createdBy == pid);
+      }
+    }
+
+    // Leave and WFH requests: private to the person and managers
+    match /leave/{pid}/requests/{rid} {
+      allow read, write: if isAdmin() || isMe(pid);
+    }
+
+    // Manager decisions on requests
+    match /approvals/{pid}/items/{iid} {
+      allow read: if isAdmin() || isMe(pid);
+      allow write: if isAdmin();
+    }
+
+    // Anonymous "someone is away that day" markers for the daily limit
+    match /holds/{hid} {
+      allow read, write: if isTeam();
+    }
+
+    // Team settings (leave allowance, hours, Saturday groups, display names)
+    match /settings/{doc} {
+      allow read: if isTeam();
+      allow write: if isAdmin();
+    }
+
+    match /invites/{doc} {
+      allow read, write: if isAdmin();
+    }
+
+    // Team bonding activities
+    match /events/{eid} {
+      allow read: if isTeam();
+      allow write: if isAdmin();
+    }
+  }
+}
