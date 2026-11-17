@@ -324,6 +324,9 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
       <p style="margin:0 0 10px">We sent a verification link to <b id="a-vemail"></b>. Open it, then come back and press Continue.</p>
       <div class="punch-actions"><button class="btn primary" type="button" id="a-cont">Continue</button><button class="btn" type="button" id="a-resend">Resend email</button><button class="btn ghost" type="button" id="a-other">Use another account</button></div>
     </div>
+    <div id="a-nomember" hidden>
+      <div class="punch-actions" style="margin-top:12px"><button class="btn primary" type="button" id="a-reload">Reload</button><button class="btn ghost" type="button" id="a-other2">Use another account</button></div>
+    </div>
     <div class="err" id="a-err" role="alert"></div>
   </div>
 </div>
@@ -557,11 +560,20 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
     <div class="grid even admin-only">
       <div class="card">
         <div class="card-head"><h2>Add a teammate</h2></div>
-        <p class="muted" style="margin:0 0 10px">Everyone in config.js is put on the board automatically. To add a new person, add their name and email to config.js and firestore.rules first; to bring back someone you removed, search for them here.</p>
-        <input id="add-q" placeholder="Search by name or email" autocomplete="off">
-        <label for="add-bd" style="display:block;margin-top:10px">Birthday <span class="faint" style="font-weight:400;text-transform:none">(optional, DD-MM)</span></label>
-        <input id="add-bd" placeholder="e.g. 05-03 for 5 March" inputmode="numeric" maxlength="5" autocomplete="off">
-        <div class="results" id="add-results"></div>
+        <p class="muted" style="margin:0 0 10px">They sign in with this email (first time: Create account). To bring back someone you removed, add them again with the same email.</p>
+        <form id="add-form" novalidate>
+          <fieldset class="fs">
+            <div class="row2">
+              <label class="field"><span>Name</span><input id="add-name" maxlength="40" autocomplete="off" required></label>
+              <label class="field"><span>Work email</span><input type="email" id="add-email" autocomplete="off" required></label>
+            </div>
+            <div class="row2">
+              <label class="field"><span>Role</span><select id="add-role"><option value="member">Employee</option><option value="manager">Manager</option></select></label>
+              <label class="field"><span>Birthday (optional)</span><input id="add-bd" placeholder="DD-MM, e.g. 05-03" inputmode="numeric" maxlength="5" autocomplete="off"></label>
+            </div>
+            <div class="form-foot"><span class="muted">Managers can approve leave, assign tasks and change the team.</span><button class="btn primary" type="submit">Add teammate</button></div>
+          </fieldset>
+        </form>
         <div id="invite-status"></div>
       </div>
       <div class="card">
@@ -595,28 +607,36 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
 'use strict';
 const $ = s => document.querySelector(s);
 const CFG = window.TRACKER_CONFIG || {};
-const TEAM = CFG.team || {};
-const ADMINS = (CFG.admins || []).map(e => String(e).trim().toLowerCase());
-const DOMAIN = String(CFG.allowedEmailDomain || '').toLowerCase().replace(/^@/, '');
+/* The team lives in the database (members/{email}: id, name, role). Managers change it in the Team tab.
+   config.js "owners" are always managers; config.js "team" is only used once, to fill an empty members list. */
+const lc = e => String(e || '').trim().toLowerCase();
+const OWNERS = (CFG.owners || CFG.admins || []).map(lc);
+const DOMAIN = lc(CFG.allowedEmailDomain).replace(/^@/, '');
 const slug = n => String(n).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-const byEmail = {}, nameOf = {}, emailOf = {};
-for (const [name, email] of Object.entries(TEAM)) { const id = slug(name), em = String(email).trim().toLowerCase(); byEmail[em] = id; nameOf[id] = name; emailOf[id] = em; }
-window.TD = {nameOf, emailOf, slug};
+const byEmail = {}, nameOf = {}, emailOf = {}, roleOf = {};
+function setMembers(docs) {
+  for (const o of [byEmail, nameOf, emailOf, roleOf]) for (const k of Object.keys(o)) delete o[k];
+  for (const d of docs) {
+    const m = d.data(), em = lc(d.id), id = m.id;
+    if (!id) continue;
+    byEmail[em] = id; nameOf[id] = m.name || id; emailOf[id] = em;
+    roleOf[id] = OWNERS.includes(em) ? 'owner' : m.role === 'manager' ? 'manager' : 'member';
+  }
+}
 /* Birthdays. Stored as "DD-MM". Set in the Team tab (settings/team.birthdays), with config.js birthdays as the default. */
 const parseBd = v => { const m = String(v || '').trim().match(/^(\d{1,2})[-/.](\d{1,2})$/); if (!m) return null; const d = +m[1], mo = +m[2]; return d >= 1 && d <= 31 && mo >= 1 && mo <= 12 ? String(d).padStart(2, '0') + '-' + String(mo).padStart(2, '0') : null; };
 const CFG_BDAYS = {};
 for (const [name, v] of Object.entries(CFG.birthdays || {})) {
-  if (!String(v || '').trim()) continue;
-  const bd = parseBd(v), id = slug(name);
-  if (!bd || !nameOf[id]) { console.warn('Birthday skipped (use "DD-MM" and a name from team):', name, v); continue; }
-  CFG_BDAYS[id] = bd;
+  const bd = parseBd(v);
+  if (bd) CFG_BDAYS[slug(name)] = bd; else if (String(v || '').trim()) console.warn('Birthday skipped (use "DD-MM"):', name, v);
 }
+window.TD = {nameOf, emailOf, roleOf, byEmail, slug, lc, parseBd, cfgBdays: CFG_BDAYS, owners: OWNERS, domain: DOMAIN, onChange: null};
 
 let resolveCtx;
 const ctxP = new Promise(r => { resolveCtx = r; });
 window.claude = {use: async name => { const c = await ctxP; return c ? (c[name] || null) : null; }};
 
-const okDomain = e => !DOMAIN || String(e || '').toLowerCase().endsWith('@' + DOMAIN);
+const okDomain = e => !DOMAIN || lc(e).endsWith('@' + DOMAIN) || OWNERS.includes(lc(e)); // owners may use any email
 const MSG = {
   'auth/invalid-credential': 'Email or password is wrong.', 'auth/wrong-password': 'Email or password is wrong.',
   'auth/user-not-found': 'No account for that email. Press Create account.', 'auth/email-already-in-use': 'That email already has an account. Press Sign in.',
@@ -629,9 +649,11 @@ function gate(step, err) {
   $('#auth').hidden = false;
   $('#a-form').hidden = step !== 'signin';
   $('#a-verify').hidden = step !== 'verify';
+  $('#a-nomember').hidden = step !== 'nomember';
   $('#a-title').textContent = step === 'verify' ? 'Verify your email' : step === 'setup' ? 'Setup needed' : 'Sign in';
   if (DOMAIN && step === 'signin') $('#a-help').textContent = `Use your @${DOMAIN} email. First time here? Enter your email, choose a password and press Create account.`;
   if (step === 'setup') $('#a-help').textContent = 'Add your Firebase project settings to config.js. The README explains how.';
+  if (step === 'nomember') { $('#a-title').textContent = 'Not on the team yet'; $('#a-help').textContent = `${err} isn't on the Team Desk team yet. Ask a manager to add this email in the Team tab, then reload this page.`; err = ''; }
   $('#a-err').textContent = err || '';
 }
 
@@ -662,18 +684,51 @@ function start() {
   };
   $('#a-resend').onclick = async () => { try { await auth.currentUser.sendEmailVerification(); $('#a-err').textContent = 'Sent again. Check your inbox and spam folder.'; } catch (err) { $('#a-err').textContent = authMsg(err); } };
   $('#a-other').onclick = () => auth.signOut();
+  $('#a-other2').onclick = () => auth.signOut().then(() => location.reload());
+  $('#a-reload').onclick = () => location.reload();
   $('#signout').onclick = () => auth.signOut().then(() => location.reload());
 
   let started = false;
-  auth.onAuthStateChanged(u => {
+  /* First sign-in by an owner while the members list is empty: copy config.js "team" into it,
+     keeping the same ids so existing data stays attached. */
+  async function importTeam(em) {
+    const cur = await fs.collection('members').get();
+    if (!cur.empty) return;
+    const batch = fs.batch(), now = Date.now(), admins = (CFG.admins || []).map(lc);
+    let mine = false;
+    for (const [name, email] of Object.entries(CFG.team || {})) {
+      const e = lc(email); if (!e) continue;
+      if (e === em) mine = true;
+      batch.set(fs.doc('members/' + e), {id: slug(name), name, role: admins.includes(e) ? 'manager' : 'member', addedBy: em, addedAt: now});
+    }
+    if (!mine) batch.set(fs.doc('members/' + em), {id: 'admin', name: 'Admin', role: 'manager', addedBy: em, addedAt: now});
+    await batch.commit();
+  }
+
+  auth.onAuthStateChanged(async u => {
     if (!u) { gate('signin'); return; }
     if (!okDomain(u.email)) { auth.signOut(); gate('signin', `Only @${DOMAIN} email addresses can use Team Desk.`); return; }
     if (!u.emailVerified) { $('#a-vemail').textContent = u.email; gate('verify'); return; }
     if (started) return;
     started = true;
+    const em = lc(u.email), owner = OWNERS.includes(em);
+    let mineDoc = await fs.doc('members/' + em).get().catch(() => null);
+    if (owner && !(mineDoc && mineDoc.exists)) {
+      try { await importTeam(em); } catch (e) { console.error('Team import failed', e); }
+      mineDoc = await fs.doc('members/' + em).get().catch(() => null);
+    }
+    if (!(mineDoc && mineDoc.exists)) { started = false; gate('nomember', u.email); return; }
+    // Load the whole team and keep it up to date
+    await new Promise(res => {
+      let first = true;
+      fs.collection('members').onSnapshot(s => {
+        setMembers(s.docs);
+        if (first) { first = false; res(); } else if (window.TD.onChange) window.TD.onChange();
+      }, e => { console.error('Members list', e); if (first) { first = false; res(); } });
+    });
     document.body.classList.remove('signed-out');
     $('#auth').hidden = true;
-    const em = String(u.email).toLowerCase(), me = byEmail[em] || null, admin = ADMINS.includes(em) && !!me;
+    const me = byEmail[em] || null, admin = !!me && (owner || roleOf[me] === 'manager');
     const profiles = async ids => { const o = {}; for (const i of ids) o[i] = {id: i, name: nameOf[i] || '', email: emailOf[i] || '', avatarUrl: ''}; return o; };
     const user = {
       me: async () => ({id: me, canEdit: admin, name: nameOf[me] || '', email: em}),
@@ -719,7 +774,9 @@ function satGroupOn(k) {
   const n = satGroupCount(), start = (Number(S.settings.satAnchorGroup) || 1) - 1;
   return (((weeks + start) % n) + n) % n + 1;
 }
-const bdOf = id => { const set = S.settings.birthdays || {}; return id in set ? set[id] : (CFG_BDAYS[id] || ''); };
+const TD = window.TD || {nameOf: {}, emailOf: {}, roleOf: {}, byEmail: {}, cfgBdays: {}, owners: [], slug: x => x, lc: x => String(x || '').trim().toLowerCase(), parseBd: () => null};
+const parseBd = TD.parseBd;
+const bdOf = id => { const set = S.settings.birthdays || {}; return id in set ? set[id] : (TD.cfgBdays[id] || ''); };
 const bdaysOn = k => { const want = k.slice(8) + '-' + k.slice(5, 7); return people().filter(id => bdOf(id) === want); };
 const satCrew = k => Object.entries(S.settings.satGroup || {}).filter(([id, g]) => Number(g) === satGroupOn(k) && S.roster.has(id) && !S.roster.get(id).removed).map(([id]) => id);
 function isWorkDay(uid, d) {
@@ -760,7 +817,7 @@ const S = {
 
 /* ---------- helpers ---------- */
 /* A display name the manager set in Team overview wins over the person's Claude profile name. */
-const nm = id => ((S.settings.displayNames || {})[id] || '').trim() || (S.names[id] && S.names[id].name) || (id === S.me ? 'You' : 'Teammate');
+const nm = id => ((S.settings.displayNames || {})[id] || '').trim() || (S.names[id] && S.names[id].name) || ((S.roster.get(id) || {}).name || '') || (id === S.me ? 'You' : 'Teammate');
 const first = id => nm(id).split(/\s+/)[0];
 const ini = id => { const w = nm(id).split(/[\s._-]+/).filter(Boolean); return ((w[0] || '?')[0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase(); };
 const nameHTML = id => `<span class="nm-full">${esc(nm(id))}</span><span class="nm-ini" title="${esc(nm(id))}">${esc(ini(id))}</span>`;
@@ -960,7 +1017,7 @@ function doRender() {
 }
 function renderHeader() {
   $('#today-date').textContent = new Date().toLocaleDateString([], {weekday: 'long', day: 'numeric', month: 'long'});
-  setHTML($('#me-chip'), S.me ? `${avatar(S.me, 26)}<span class="nm">${nameHTML(S.me)}</span><span class="role">${S.admin ? 'Manager' : 'Member'}</span>` : '');
+  setHTML($('#me-chip'), S.me ? `${avatar(S.me, 26)}<span class="nm">${nameHTML(S.me)}</span><span class="role">${TD.roleOf[S.me] === 'owner' ? 'Admin' : S.admin ? 'Manager' : 'Employee'}</span>` : '');
   const pend = S.admin ? allReqs().filter(r => r.status === 'pending').length : 0;
   const pc = $('#pending-count'); pc.hidden = !pend; pc.textContent = pend;
 }
@@ -1287,15 +1344,21 @@ function renderTeam() {
   const allowInput = id => `<input type="number" class="dn-input" data-allowfor="${esc(id)}" min="0" max="60" step="0.5" value="${ab[id] != null ? esc(ab[id]) : ''}" placeholder="${esc(String(Number(S.settings.allowance) || 0))}" aria-label="Paid leave days for ${esc(nm(id))}" title="Paid leave days this year. Leave empty to use the team default." style="width:72px;min-width:0;text-align:right" ${canAct() ? '' : 'disabled'}>`;
   const bdInput = id => `<input class="dn-input" data-bdayfor="${esc(id)}" value="${esc(bdOf(id))}" placeholder="DD-MM" inputmode="numeric" maxlength="5" aria-label="Birthday of ${esc(nm(id))}" title="Birthday as day-month, e.g. 05-03 for 5 March" style="width:76px;min-width:0" ${canAct() ? '' : 'disabled'}>`;
   const fmtBd = id => { const b = bdOf(id); if (!b) return '<span class="faint">—</span>'; const [d, mo] = b.split('-').map(Number); return esc(new Date(2000, mo - 1, d).toLocaleDateString([], {day: 'numeric', month: 'short'})); };
+  const roleCell = id => {
+    const r = TD.roleOf[id];
+    if (r === 'owner') return '<span class="chip" title="Set in config.js and firestore.rules; always has full access">Admin</span>';
+    if (!r) return '<span class="faint">No access</span>';
+    return `<select data-rolefor="${esc(id)}" aria-label="Role of ${esc(nm(id))}" style="width:auto" ${canAct() && id !== S.me ? '' : 'disabled'}><option value="member" ${r === 'member' ? 'selected' : ''}>Employee</option><option value="manager" ${r === 'manager' ? 'selected' : ''}>Manager</option></select>`;
+  };
   const dnInput = id => `<input class="dn-input" data-dispname="${esc(id)}" value="${esc(dnames[id] || '')}" placeholder="${esc((S.names[id] && S.names[id].name) || 'Display name')}" aria-label="Display name" maxlength="40" ${canAct() ? '' : 'disabled'}>`;
-  setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Display name</th>' : ''}<th>Today</th><th>Birthday</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken / allowed ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
+  setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Role</th><th>Display name</th>' : ''}<th>Today</th><th>Birthday</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken / allowed ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
     ${ppl.map(id => {
       const s = todayStatus(id), lu = leaveUsed(id, year);
       const wfh = [...(S.att.get(id)?.values() || [])].filter(a => a.date && a.date.startsWith(m) && a.mode === 'wfh').length;
       const open = tasks.filter(x => x.uid === id && x.status !== 'done');
       const over = open.filter(x => x.due && x.due < todayKey()).length;
-      return `<tr><td>${who(id)}</td>${S.admin ? `<td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? bdInput(id) : fmtBd(id)}</td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num" style="white-space:nowrap">${lu.used} / ${allowInput(id)}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
-      ${S.admin ? `<td style="text-align:right">${id !== S.me ? btn('remove', 'Remove', {uid: id, id: id}, null, 'small ghost') : ''}</td>` : ''}</tr>`;
+      return `<tr><td>${who(id)}</td>${S.admin ? `<td>${roleCell(id)}</td><td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? bdInput(id) : fmtBd(id)}</td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num" style="white-space:nowrap">${lu.used} / ${allowInput(id)}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
+      ${S.admin ? `<td style="text-align:right">${id !== S.me && TD.roleOf[id] !== 'owner' ? btn('remove', 'Remove', {uid: id, id: id}, null, 'small ghost') : ''}</td>` : ''}</tr>`;
     }).join('')}</tbody></table>` : '<div class="empty">No one has joined yet.</div>');
   if (S.admin) {
     const nf = (S.invites && S.invites.notFound) || [];
@@ -1395,7 +1458,6 @@ function updateForms() {
     const eopts = people().map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
     if (esel._h !== eopts) { const v = esel.value; esel.innerHTML = eopts; esel._h = eopts; if ([...esel.options].some(o => o.value === v)) esel.value = v; }
   }
-  $('#add-q').disabled = !on;
   $('#tk-who').disabled = !on || !S.admin;
   $$('[data-type]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === S.applyType)));
   $('#cat-field').hidden = S.applyType !== 'leave';
@@ -1520,21 +1582,21 @@ async function ensureRegistered() {
   try { await S.db.doc('people/' + S.me).set({joined: Date.now(), name: (window.TD && window.TD.nameOf[S.me]) || ''}); }
   catch (e) { if (e && e.code === 'invalid_argument') { S.ro = true; renderAll(); } }
 }
-/* Managers put everyone from config.js on the board, so tasks and Saturday groups can be set before people sign in. */
+/* Managers keep the board in step with the team list (members): everyone on the team has a board entry,
+   and board entries for people no longer on the team are hidden. */
 let seeded = false;
 async function seedRoster() {
   if (seeded || !S.admin || S.ro || !window.TD) return;
+  if (!Object.keys(TD.nameOf).length) return; // team list didn't load; change nothing
   seeded = true;
-  for (const [id, name] of Object.entries(window.TD.nameOf)) {
-    const ex = S.roster.get(id);
-    // Bring back people hidden by the config clean-up (older versions didn't record who removed them)
-    if (ex) { if (ex.removed && (ex.removedBy === 'config' || ex.removedBy === undefined)) try { await S.db.doc('people/' + id).update({removed: false, removedBy: ''}); } catch (e) {} continue; }
-    try { await S.db.doc('people/' + id).set({joined: Date.now(), name, addedBy: S.me}); } catch (e) {}
+  for (const [id, name] of Object.entries(TD.nameOf)) {
+    const ex = S.roster.get(id), email = TD.emailOf[id] || '';
+    if (ex) { if (ex.removed || ex.email !== email) try { await S.db.doc('people/' + id).set({removed: false, removedBy: '', email}, {merge: true}); } catch (e) {} continue; }
+    try { await S.db.doc('people/' + id).set({joined: Date.now(), name, email, addedBy: S.me}); } catch (e) {}
   }
-  // Take people whose name was changed in (or removed from) config.js off the board
   for (const [id, d] of S.roster) {
-    if (window.TD.nameOf[id] || d.removed) continue;
-    try { await S.db.doc('people/' + id).update({removed: true, removedBy: 'config'}); } catch (e) {}
+    if (TD.nameOf[id] || d.removed) continue;
+    try { await S.db.doc('people/' + id).update({removed: true, removedBy: 'team'}); } catch (e) {}
   }
   // Saturday groups from config.js: applied while no groups have been set in the app,
   // and again for anyone whose name changed in config.js (their old group entry is dropped)
@@ -1628,7 +1690,11 @@ document.addEventListener('click', e => {
     }
     if (act === 'task-del') guard(() => tdoc(uid, id).delete(), 'Task deleted');
     else if (act === 'ev-del') guard(() => S.db.doc('events/' + id).delete(), 'Activity deleted');
-    else if (act === 'remove') guard(() => S.db.doc('people/' + uid).update({removed: true, removedBy: S.me}), 'Removed from the board');
+    else if (act === 'remove') guard(async () => {
+      const em = TD.emailOf[uid] || '';
+      await S.db.doc('people/' + uid).set({removed: true, removedBy: S.me, ...(em ? {email: em} : {})}, {merge: true});
+      if (em) await S.db.doc('members/' + em).delete();
+    }, 'Removed from the team. They can no longer sign in to Team Desk.');
     else {
       const r = S.reqs.get(uid)?.get(id);
       guard(async () => {
@@ -1643,15 +1709,6 @@ document.addEventListener('click', e => {
       await S.db.doc(`approvals/${uid}/items/${id}`).set({decision: status, type: r.type, from: r.from, to: r.to, half: !!r.half, by: S.me, at: Date.now()});
       if (status === 'rejected' && r.holdId) await S.db.doc('holds/' + r.holdId).delete().catch(() => {});
     }, status === 'approved' ? 'Approved' : 'Declined');
-  }
-  else if (act === 'add-person') {
-    const ex = S.roster.get(uid), rawBd = $('#add-bd').value.trim(), bd = rawBd ? parseBd(rawBd) : '';
-    if (bd === null) { toast('Enter the birthday as DD-MM, for example 05-03 for 5 March, or leave it empty.', true); $('#add-bd').focus(); return; }
-    guard(async () => {
-      await (ex ? S.db.doc('people/' + uid).update({removed: false, removedBy: ''}) : S.db.doc('people/' + uid).set({joined: Date.now(), addedBy: S.me}));
-      if (bd) await S.db.doc('settings/team').set({...S.settings, birthdays: {...(S.settings.birthdays || {}), [uid]: bd}});
-    }, bd ? 'Added to the team with their birthday' : 'Added to the team');
-    $('#add-q').value = ''; $('#add-bd').value = ''; setHTML($('#add-results'), '');
   }
 });
 
@@ -1719,6 +1776,13 @@ document.addEventListener('change', e => {
     guard(() => S.db.doc('settings/team').set({...S.settings, allowanceBy: by}), `Leave allowance saved for ${first(al.dataset.allowfor)}`);
     return;
   }
+  const rs = e.target.closest && e.target.closest('[data-rolefor]');
+  if (rs && canAct() && S.admin) {
+    const id = rs.dataset.rolefor, em = TD.emailOf[id], role = rs.value === 'manager' ? 'manager' : 'member';
+    if (!em || id === S.me) return;
+    guard(() => S.db.doc('members/' + em).update({role}), `${first(id)} is now ${role === "manager" ? "a manager" : "an employee"}. It applies the next time they open Team Desk.`);
+    return;
+  }
   const bdi = e.target.closest && e.target.closest('[data-bdayfor]');
   if (bdi && canAct() && S.admin) {
     const id = bdi.dataset.bdayfor, raw = bdi.value.trim(), bd = raw ? parseBd(raw) : '';
@@ -1782,18 +1846,30 @@ $('#ts-csv').addEventListener('click', async () => {
   try { await S.dl.save({filename: `timesheet-${name}-${S.ts.month}.csv`, data: csv}); }
   catch (e) { if (e && e.code !== 'declined') toast("Couldn't prepare the download here.", true); }
 });
-const addQ = $('#add-q');
-function runSearch() {
-  if (!S.user || !S.admin) return;
-  S.user.search(addQ.value.trim()).then(hits => {
-    const active = new Set(people());
-    setHTML($('#add-results'), hits.filter(h => h.id && !active.has(h.id)).map(h => `<div class="item"><span class="who">${h.avatarUrl ? `<img class="av" width="24" height="24" style="width:24px;height:24px" src="${esc(h.avatarUrl)}" alt="">` : ''}<span class="nm">${esc(h.name)}</span></span>
-      <div class="acts"><button class="btn small" type="button" data-act="add-person" data-uid="${esc(h.id)}">Add</button></div></div>`).join('')
-      || (addQ.value.trim() ? '<div class="empty">No one new matches that name.</div>' : ''));
-  });
-}
-addQ.addEventListener('input', runSearch);
-addQ.addEventListener('focus', runSearch);
+/* Add a teammate: creates their team membership (sign-in access + role) and their board entry */
+$('#add-form').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!canAct() || !S.admin) return;
+  const name = $('#add-name').value.trim().replace(/\s+/g, ' ').slice(0, 40), em = TD.lc($('#add-email').value), role = $('#add-role').value === 'manager' ? 'manager' : 'member';
+  const rawBd = $('#add-bd').value.trim(), bd = rawBd ? parseBd(rawBd) : '';
+  if (!name) { toast('Enter their name.', true); $('#add-name').focus(); return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { toast("That email address isn't valid.", true); $('#add-email').focus(); return; }
+  if (TD.domain && !em.endsWith('@' + TD.domain)) { toast(`Only @${TD.domain} email addresses can join.`, true); $('#add-email').focus(); return; }
+  if (bd === null) { toast('Enter the birthday as DD-MM, for example 05-03 for 5 March, or leave it empty.', true); $('#add-bd').focus(); return; }
+  if (TD.byEmail[em]) { toast(`${em} is already on the team.`, true); return; }
+  // Someone removed earlier keeps their old id, so their history comes back with them
+  const back = [...S.roster.entries()].find(([, d]) => TD.lc(d.email) === em);
+  let id = back ? back[0] : TD.slug(name) || 'person';
+  if (!back) { const base = id; let n = 2; while (S.roster.has(id) || TD.nameOf[id]) id = `${base}-${n++}`; }
+  guard(async () => {
+    const batch = S.db.batch();
+    batch.set(S.db.doc('members/' + em), {id, name, role, addedBy: S.me, addedAt: Date.now()});
+    batch.set(S.db.doc('people/' + id), back ? {name, email: em, removed: false, removedBy: ''} : {name, email: em, joined: Date.now(), addedBy: S.me}, {merge: true});
+    if (bd) batch.set(S.db.doc('settings/team'), {...S.settings, birthdays: {...(S.settings.birthdays || {}), [id]: bd}});
+    await batch.commit();
+    $('#add-form').reset();
+  }, back ? `${name} is back on the team` : `${name} added. They can sign in with ${em}.`);
+});
 
 /* ---------- routing ---------- */
 const VIEWS = ['calendar', 'today', 'leave', 'tasks', 'timesheet', 'team', 'bonding', 'stats'];
@@ -1824,6 +1900,7 @@ async function boot() {
   S.db = db;
   const me = await user.me();
   S.me = me.id; S.admin = !!me.canEdit;
+  TD.onChange = () => { refreshNames(); renderAll(); };
   if (!S.me) { S.status = 'nodb'; renderAll(); return; }
   if ((await user.can('data.write')) === false) S.ro = true;
   document.body.classList.toggle('is-admin', S.admin);

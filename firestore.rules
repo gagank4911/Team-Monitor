@@ -3,47 +3,51 @@ rules_version = '2';
 // Team Desk database rules.
 // Paste into Firebase console > Firestore Database > Rules, then press Publish.
 //
-//   Everyone on the team (verified @1cell.ai email) can SEE attendance, tasks, the roster,
+//   Everyone on the team (on the team list, with a verified @1cell.ai email) can SEE attendance, tasks, the roster,
 //   settings and team bonding.
 //   Each person can CHANGE only their own check-ins, their own tasks' status, and their own
 //   leave/WFH requests. Leave/WFH requests are visible only to that person and managers.
 //   Managers (admins) can approve leave, assign tasks, change settings and plan team bonding.
 //
-// >>> Keep team() and admins() identical to config.js. Keys are the names in lowercase. <<<
+//   The team and everyone's role live in the database (members/{email}) and are managed in the
+//   app's Team tab. Adding people or changing roles needs no change here.
+//
+// >>> owners() are the admins: always managers, can never be locked out, and may use any email
+//     (not only @1cell.ai). Keep identical to "owners" in config.js. <<<
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function team() {
-      return {
-        'sumit':        'sumit.halder@1cell.ai',
-        'gagan':        'gagan.kumar@1cell.ai',
-        'uzma':         'uzma.farooque@1cell.ai',
-        'shivani':      'shivani.rai@1cell.ai',
-        'ankit':        'ankit.yadav@1cell.ai',
-        'vicky':        'vicky.jha@1cell.ai',
-        'moumita':      'moumita.roy@1cell.ai',
-        'aparna':       'aparna.sornapudi@1cell.ai',
-        'chinmay':      'chinmay.koppal@1cell.ai',
-        'surabhi':      'surabhi.pednekar@1cell.ai'
-      };
-    }
-
-    function admins() {
-      return ['gagan.kumar@1cell.ai' ,'sumit.halder@1cell.ai'];
+    function owners() {
+      return ['gagank4911@gmail.com'];
     }
 
     function myEmail() { return request.auth.token.email.lower(); }
 
-    function isTeam() {
+    function verified() {
       return request.auth != null
         && request.auth.token.email_verified == true
-        && myEmail().matches('.*@1cell[.]ai$');
+        && (myEmail().matches('.*@1cell[.]ai$') || myEmail() in owners());
     }
 
-    function isAdmin() { return isTeam() && myEmail() in admins(); }
+    function memberPath() { return /databases/$(database)/documents/members/$(myEmail()); }
+    function isOwner() { return verified() && myEmail() in owners(); }
+    function isMember() { return verified() && exists(memberPath()); }
+
+    // Anyone on the team (owners count even before the team list exists)
+    function isTeam() { return isOwner() || isMember(); }
+
+    function isAdmin() { return isOwner() || (isMember() && get(memberPath()).data.role == 'manager'); }
 
     // true when person id `pid` belongs to the signed-in person
-    function isMe(pid) { return isTeam() && team().get(pid, '') == myEmail(); }
+    function isMe(pid) { return isMember() && get(memberPath()).data.id == pid; }
+
+    // The team list: who can sign in, their person id and role. Only managers change it.
+    match /members/{email} {
+      allow get: if verified() && (email == myEmail() || isTeam());
+      allow list: if isTeam();
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin() && !(email in owners());
+    }
 
     // Roster
     match /people/{pid} {
