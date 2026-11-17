@@ -20,16 +20,16 @@ service cloud.firestore {
         'uzma':         'uzma.farooque@1cell.ai',
         'shivani':      'shivani.rai@1cell.ai',
         'ankit':        'ankit.yadav@1cell.ai',
-        'viki':         'vicky.jha@1cell.ai',
-        'moumitha':     'moumita.roy@1cell.ai',
+        'vicki':        'vicky.jha@1cell.ai',
+        'moumita':      'moumita.roy@1cell.ai',
         'aparna':       'aparna.sornapudi@1cell.ai',
         'chinmay':      'chinmay.koppal@1cell.ai',
-        'surbhi':       'surabhi.pednekar@1cell.ai'
+        'surabhi':      'surabhi.pednekar@1cell.ai'
       };
     }
 
     function admins() {
-      return ['gagan.kumar@1cell.ai'];
+      return ['gagan.kumar@1cell.ai' ,'sumit.halder@1cell.ai'];
     }
 
     function myEmail() { return request.auth.token.email.lower(); }

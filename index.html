@@ -292,7 +292,7 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
       <button class="btn small ghost" type="button" id="signout">Sign out</button>
     </div>
     <nav class="tabs" aria-label="Sections">
-      <a href="#calendar" data-view="calendar" class="admin-only">Calendar</a>
+      <a href="#calendar" data-view="calendar">Calendar</a>
       <a href="#today" data-view="today">Today</a>
       <a href="#leave" data-view="leave">Leave &amp; WFH<span class="count" id="pending-count" hidden></span></a>
       <a href="#tasks" data-view="tasks">Tasks</a>
@@ -340,14 +340,14 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
         </div>
         <div class="cal-stats" id="cal-stats"></div>
         <div class="cal-scroll"><div class="bigcal" id="bigcal"><div class="empty">Loading the calendar…</div></div></div>
-        <div class="legend"><span class="cchip leave">Leave</span><span class="cchip wfh">Name · WFH</span><span class="cchip leave pending">Awaiting approval</span><span class="cchip flag">Over the daily limit</span><span>Only you can see this calendar.</span></div>
+        <div class="legend"><span class="cchip leave">Leave</span><span class="cchip wfh">Name · WFH</span><span class="cchip leave pending">Awaiting approval</span><span class="cchip flag">Over the daily limit</span><span>Everyone on the team can see this calendar.</span></div>
       </div>
       <div class="stack">
         <div class="card">
           <div class="card-head"><h2>Coming up</h2><span class="sub">Next 30 days</span></div>
           <div class="agenda" id="upcoming"><div class="empty">Loading…</div></div>
         </div>
-        <div class="card">
+        <div class="card admin-only">
           <div class="card-head"><h2>Add an entry</h2></div>
           <form id="entry-form" novalidate>
             <fieldset class="fs" id="entry-fs">
@@ -936,7 +936,7 @@ const chipClass = k => ({office: 'office', wfh: 'wfh', wfhplan: 'wfh pending', l
 let rq = false;
 function renderAll() { if (rq) return; rq = true; setTimeout(() => { rq = false; doRender(); }, 20); }
 function doRender() {
-  if (S.admin) computeClash();
+  computeClash();
   renderHeader(); renderBanner(); renderCalendar(); renderToday(); renderLeave(); renderTasks(); renderTimesheet(); renderTeam(); renderStats(); renderBonding();
   updateForms(); refreshNames();
 }
@@ -1095,7 +1095,7 @@ function wfhFlag(r) {
   return ov.length ? `<div class="meta"><span class="chip danger">Over 1 WFH day a week: ${ov.map(o => `${o.n} days in week of ${esc(fmtShort(o.w))}`).join(', ')}</span></div>` : '';
 }
 function renderCalendar() {
-  if (!ready() || !S.admin) return;
+  if (!ready()) return;
   const {byDate, flagged, max} = S.clash;
   const t = todayKey();
   const m0 = pkey(S.calMonth + '-01');
@@ -1424,8 +1424,8 @@ function subUser(uid) {
   const un = [];
   un.push(base.collection('attendance').where('date', '>=', windowStart()).onSnapshot(s => { S.att.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
   un.push(base.collection('tasks').onSnapshot(s => { S.tasks.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
-  // Leave requests and decisions are private: each person reads their own, the manager reads everyone's.
-  if (S.admin || uid === S.me) {
+  // Everyone reads the team's leave/WFH so the shared calendar can show who is away.
+  {
     un.push(S.db.collection(`leave/${uid}/requests`).onSnapshot(s => { S.reqs.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
     un.push(S.db.collection(`approvals/${uid}/items`).onSnapshot(s => { S.appr.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
   }
@@ -1509,7 +1509,13 @@ async function seedRoster() {
     if (S.roster.has(id)) continue;
     try { await S.db.doc('people/' + id).set({joined: Date.now(), name, addedBy: S.me}); } catch (e) {}
   }
-  // Saturday groups from config.js, applied once while no groups have been set in the app
+  // Take people whose name was changed in (or removed from) config.js off the board
+  for (const [id, d] of S.roster) {
+    if (window.TD.nameOf[id] || d.removed) continue;
+    try { await S.db.doc('people/' + id).update({removed: true}); } catch (e) {}
+  }
+  // Saturday groups from config.js: applied while no groups have been set in the app,
+  // and again for anyone whose name changed in config.js (their old group entry is dropped)
   const cfg = (window.TRACKER_CONFIG || {}).saturdayGroups || {};
   const sg = {};
   for (const [name, g] of Object.entries(cfg)) { const id = window.TD.slug(name); if (window.TD.nameOf[id] && Number(g)) sg[id] = Number(g); }
@@ -1517,7 +1523,15 @@ async function seedRoster() {
   try {
     const cur = await S.db.doc('settings/team').get();
     const have = cur.exists ? (cur.data().satGroup || {}) : {};
-    if (Object.keys(have).length) return;
+    if (Object.keys(have).length) {
+      const stale = Object.keys(have).filter(id => !window.TD.nameOf[id]);
+      if (!stale.length) return;
+      const fixed = {...have};
+      stale.forEach(id => delete fixed[id]);
+      for (const [id, g] of Object.entries(sg)) if (!(id in fixed)) fixed[id] = g;
+      await S.db.doc('settings/team').set({...cur.data(), satGroup: fixed});
+      return;
+    }
     const base = cur.exists ? cur.data() : {allowance: S.settings.allowance, hours: S.settings.hours, maxAway: S.settings.maxAway};
     await S.db.doc('settings/team').set({...base, satGroup: sg, satAnchor: base.satAnchor || '2026-11-21', satAnchorGroup: base.satAnchorGroup || 1});
     toast('Saturday groups set from config.js');
@@ -1749,7 +1763,7 @@ addQ.addEventListener('focus', runSearch);
 
 /* ---------- routing ---------- */
 const VIEWS = ['calendar', 'today', 'leave', 'tasks', 'timesheet', 'team', 'bonding', 'stats'];
-const MANAGER_VIEWS = ['calendar', 'stats'];
+const MANAGER_VIEWS = ['stats'];
 function route() {
   const h = location.hash.slice(1);
   const allowed = S.admin ? VIEWS : VIEWS.filter(v => !MANAGER_VIEWS.includes(v));
