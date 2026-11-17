@@ -34,6 +34,6 @@ window.TRACKER_CONFIG = {
     "Chinmay":   "chinmay.koppal@1cell.ai",
     "Surbhi":    "surabhi.pednekar@1cell.ai"
   },
-  admins: ["gagan.kumar@1cell.ai"],
+  admins: ["gagan.kumar@1cell.ai", "sumit.halder@1cell.ai"],
   allowedEmailDomain: "1cell.ai"
 };
