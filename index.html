@@ -1465,7 +1465,7 @@ async function maybeImport() {
     const ex = S.roster.get(hit.id);
     try {
       if (!ex) { await S.db.doc('people/' + hit.id).set({joined: Date.now(), addedBy: S.me}); added++; }
-      else if (ex.removed) { await S.db.doc('people/' + hit.id).update({removed: false}); added++; }
+      else if (ex.removed) { await S.db.doc('people/' + hit.id).update({removed: false, removedBy: ''}); added++; }
     } catch (e) { notFound.push(email); delete idOf[email]; }
   }
   // Saturday groups
@@ -1506,13 +1506,14 @@ async function seedRoster() {
   if (seeded || !S.admin || S.ro || !window.TD) return;
   seeded = true;
   for (const [id, name] of Object.entries(window.TD.nameOf)) {
-    if (S.roster.has(id)) continue;
+    const ex = S.roster.get(id);
+    if (ex) { if (ex.removed && ex.removedBy === 'config') try { await S.db.doc('people/' + id).update({removed: false, removedBy: ''}); } catch (e) {} continue; }
     try { await S.db.doc('people/' + id).set({joined: Date.now(), name, addedBy: S.me}); } catch (e) {}
   }
   // Take people whose name was changed in (or removed from) config.js off the board
   for (const [id, d] of S.roster) {
     if (window.TD.nameOf[id] || d.removed) continue;
-    try { await S.db.doc('people/' + id).update({removed: true}); } catch (e) {}
+    try { await S.db.doc('people/' + id).update({removed: true, removedBy: 'config'}); } catch (e) {}
   }
   // Saturday groups from config.js: applied while no groups have been set in the app,
   // and again for anyone whose name changed in config.js (their old group entry is dropped)
@@ -1606,7 +1607,7 @@ document.addEventListener('click', e => {
     }
     if (act === 'task-del') guard(() => tdoc(uid, id).delete(), 'Task deleted');
     else if (act === 'ev-del') guard(() => S.db.doc('events/' + id).delete(), 'Activity deleted');
-    else if (act === 'remove') guard(() => S.db.doc('people/' + uid).update({removed: true}), 'Removed from the board');
+    else if (act === 'remove') guard(() => S.db.doc('people/' + uid).update({removed: true, removedBy: S.me}), 'Removed from the board');
     else {
       const r = S.reqs.get(uid)?.get(id);
       guard(async () => {
@@ -1624,7 +1625,7 @@ document.addEventListener('click', e => {
   }
   else if (act === 'add-person') {
     const ex = S.roster.get(uid);
-    guard(() => ex ? S.db.doc('people/' + uid).update({removed: false}) : S.db.doc('people/' + uid).set({joined: Date.now(), addedBy: S.me}), 'Added to the team');
+    guard(() => ex ? S.db.doc('people/' + uid).update({removed: false, removedBy: ''}) : S.db.doc('people/' + uid).set({joined: Date.now(), addedBy: S.me}), 'Added to the team');
     $('#add-q').value = ''; setHTML($('#add-results'), '');
   }
 });
