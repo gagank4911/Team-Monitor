@@ -17,6 +17,7 @@
   --bg:#F2F5F5; --surface:#FFFFFF; --sunk:#E8EEED; --line:#D5DEDD; --fg:#132221; --muted:#556866; --faint:#879896;
   --accent:#0B6E68; --accent-hover:#085A55; --on-accent:#FFFFFF; --accent-soft:#D8EDEA;
   --office:#1D7A3D; --office-soft:#DBF0E1;
+  --bday:#A2367A; --bday-soft:#F7E1EE;
   --wfh:#2C5DB2; --wfh-soft:#DEE7F7;
   --leave:#9C5508; --leave-soft:#FAE8D0;
   --danger:#B3261E; --danger-soft:#FADEDB;
@@ -29,6 +30,7 @@
   --bg:#0D1514; --surface:#141F1E; --sunk:#1A2726; --line:#283937; --fg:#E2EDEC; --muted:#9BAFAD; --faint:#6C817F;
   --accent:#40B7AB; --accent-hover:#5FCBC0; --on-accent:#04201D; --accent-soft:#15322E;
   --office:#5DCB80; --office-soft:#15301E;
+  --bday:#EE93CB; --bday-soft:#3A1830;
   --wfh:#82A8F1; --wfh-soft:#19253E;
   --leave:#EFA352; --leave-soft:#37260F;
   --danger:#F0897F; --danger-soft:#3A1815;
@@ -40,6 +42,7 @@
   --bg:#0D1514; --surface:#141F1E; --sunk:#1A2726; --line:#283937; --fg:#E2EDEC; --muted:#9BAFAD; --faint:#6C817F;
   --accent:#40B7AB; --accent-hover:#5FCBC0; --on-accent:#04201D; --accent-soft:#15322E;
   --office:#5DCB80; --office-soft:#15301E;
+  --bday:#EE93CB; --bday-soft:#3A1830;
   --wfh:#82A8F1; --wfh-soft:#19253E;
   --leave:#EFA352; --leave-soft:#37260F;
   --danger:#F0897F; --danger-soft:#3A1815;
@@ -213,6 +216,8 @@ form .fs{display:flex;flex-direction:column;gap:12px}
 .cchip.pending{background:transparent;box-shadow:inset 0 0 0 1px currentColor}
 .cchip.flag{background:var(--danger);color:var(--surface)}
 .cchip.flag.pending{background:var(--danger-soft);color:var(--danger);box-shadow:inset 0 0 0 1px var(--danger)}
+.bigcal .bday{font-size:11px;color:var(--bday);font-weight:600;overflow-wrap:anywhere;line-height:1.3}
+.cchip.bday,.chip.bday{background:var(--bday-soft);color:var(--bday)}
 .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:12px}
 .cal-stats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .agenda .ad{padding:10px 0;border-top:1px solid var(--line)}
@@ -340,7 +345,7 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
         </div>
         <div class="cal-stats" id="cal-stats"></div>
         <div class="cal-scroll"><div class="bigcal" id="bigcal"><div class="empty">Loading the calendar…</div></div></div>
-        <div class="legend"><span class="cchip leave">Leave</span><span class="cchip wfh">Name · WFH</span><span class="cchip leave pending">Awaiting approval</span><span class="cchip flag">Over the daily limit</span><span>Everyone on the team can see this calendar.</span></div>
+        <div class="legend"><span class="cchip leave">Leave</span><span class="cchip wfh">Name · WFH</span><span class="cchip leave pending">Awaiting approval</span><span class="cchip flag">Over the daily limit</span><span class="cchip bday">🎂 Birthday</span><span>Everyone on the team can see this calendar.</span></div>
       </div>
       <div class="stack">
         <div class="card">
@@ -554,6 +559,8 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
         <div class="card-head"><h2>Add a teammate</h2></div>
         <p class="muted" style="margin:0 0 10px">Everyone in config.js is put on the board automatically. To add a new person, add their name and email to config.js and firestore.rules first; to bring back someone you removed, search for them here.</p>
         <input id="add-q" placeholder="Search by name or email" autocomplete="off">
+        <label for="add-bd" style="display:block;margin-top:10px">Birthday <span class="faint" style="font-weight:400;text-transform:none">(optional, DD-MM)</span></label>
+        <input id="add-bd" placeholder="e.g. 05-03 for 5 March" inputmode="numeric" maxlength="5" autocomplete="off">
         <div class="results" id="add-results"></div>
         <div id="invite-status"></div>
       </div>
@@ -595,6 +602,15 @@ const slug = n => String(n).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').rep
 const byEmail = {}, nameOf = {}, emailOf = {};
 for (const [name, email] of Object.entries(TEAM)) { const id = slug(name), em = String(email).trim().toLowerCase(); byEmail[em] = id; nameOf[id] = name; emailOf[id] = em; }
 window.TD = {nameOf, emailOf, slug};
+/* Birthdays. Stored as "DD-MM". Set in the Team tab (settings/team.birthdays), with config.js birthdays as the default. */
+const parseBd = v => { const m = String(v || '').trim().match(/^(\d{1,2})[-/.](\d{1,2})$/); if (!m) return null; const d = +m[1], mo = +m[2]; return d >= 1 && d <= 31 && mo >= 1 && mo <= 12 ? String(d).padStart(2, '0') + '-' + String(mo).padStart(2, '0') : null; };
+const CFG_BDAYS = {};
+for (const [name, v] of Object.entries(CFG.birthdays || {})) {
+  if (!String(v || '').trim()) continue;
+  const bd = parseBd(v), id = slug(name);
+  if (!bd || !nameOf[id]) { console.warn('Birthday skipped (use "DD-MM" and a name from team):', name, v); continue; }
+  CFG_BDAYS[id] = bd;
+}
 
 let resolveCtx;
 const ctxP = new Promise(r => { resolveCtx = r; });
@@ -703,6 +719,8 @@ function satGroupOn(k) {
   const n = satGroupCount(), start = (Number(S.settings.satAnchorGroup) || 1) - 1;
   return (((weeks + start) % n) + n) % n + 1;
 }
+const bdOf = id => { const set = S.settings.birthdays || {}; return id in set ? set[id] : (CFG_BDAYS[id] || ''); };
+const bdaysOn = k => { const want = k.slice(8) + '-' + k.slice(5, 7); return people().filter(id => bdOf(id) === want); };
 const satCrew = k => Object.entries(S.settings.satGroup || {}).filter(([id, g]) => Number(g) === satGroupOn(k) && S.roster.has(id) && !S.roster.get(id).removed).map(([id]) => id);
 function isWorkDay(uid, d) {
   const g = d.getDay();
@@ -1121,10 +1139,11 @@ function renderCalendar() {
     if (over) overDays++;
     list.forEach(r => { if (r.type === 'wfh') wfhDays++; else leaveDays++; if (r.status === 'pending') pend++; });
     list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    const crew = sat ? satCrew(k) : [];
+    const crew = sat ? satCrew(k) : [], bd = bdaysOn(k);
+    const bdLine = bd.length ? `<span class="bday" title="Birthday: ${esc(bd.map(nm).join(', '))}">🎂 ${esc(bd.map(first).join(', '))}</span>` : '';
     const satLine = sat ? `<span class="rota ${crew.length ? '' : 'short'}" title="Saturday duty: Group ${satGroupOn(k)}">G${satGroupOn(k)}: ${crew.length ? esc(crew.map(first).join(', ')) : 'no one assigned'}</span>` : '';
     html += `<div class="day ${sun || sat ? 'wk' : ''} ${k < t ? 'past' : ''} ${k === t ? 'today' : ''} ${over ? 'over' : ''}">
-      <div class="dhead"><span class="dn">${d.getDate()}</span>${sun ? '<span class="cnt">Off</span>' : list.length ? `<span class="cnt">${list.length} away</span>` : ''}</div>${satLine}${list.map(r => chip(r)).join('')}</div>`;
+      <div class="dhead"><span class="dn">${d.getDate()}</span>${sun ? '<span class="cnt">Off</span>' : list.length ? `<span class="cnt">${list.length} away</span>` : ''}</div>${bdLine}${satLine}${list.map(r => chip(r)).join('')}</div>`;
   }
   setHTML($('#bigcal'), html);
   setHTML($('#cal-stats'), `<span class="chip leave">${leaveDays} leave day${leaveDays === 1 ? '' : 's'}</span><span class="chip wfh">${wfhDays} WFH day${wfhDays === 1 ? '' : 's'}</span>${pend ? `<span class="chip leave pending">${pend} awaiting approval</span>` : ''}${overDays ? `<span class="chip danger">${overDays} day${overDays === 1 ? '' : 's'} over the limit of ${max}</span>` : ''}`);
@@ -1132,14 +1151,13 @@ function renderCalendar() {
   let ag = '';
   for (let i = 0; i <= 30; i++) {
     const d = addDays(new Date(), i), k = dkey(d);
-    if (d.getDay() === 0) continue;
-    const list = awayOn(k);
-    if (!list.length) continue;
+    const list = d.getDay() === 0 ? [] : awayOn(k), bd = bdaysOn(k);
+    if (!list.length && !bd.length) continue;
     const rel = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : `in ${i} days`;
-    ag += `<div class="ad"><div class="adate"><span>${esc(fmtDay(k))}<span class="rel">${rel}</span></span><span class="cnt ${list.length > max ? 'over' : ''}">${list.length} away</span></div>
-      <div class="ppl">${list.map(r => `<div class="p">${who(r.uid, 20)}${chip(r, true)}</div>`).join('')}</div></div>`;
+    ag += `<div class="ad"><div class="adate"><span>${esc(fmtDay(k))}<span class="rel">${rel}</span></span>${list.length ? `<span class="cnt ${list.length > max ? 'over' : ''}">${list.length} away</span>` : ''}</div>
+      <div class="ppl">${bd.map(id => `<div class="p">${who(id, 20)}<span class="cchip bday">🎂 Birthday</span></div>`).join('')}${list.map(r => `<div class="p">${who(r.uid, 20)}${chip(r, true)}</div>`).join('')}</div></div>`;
   }
-  setHTML($('#upcoming'), ag || '<div class="empty">No leave or work-from-home booked in the next 30 days.</div>');
+  setHTML($('#upcoming'), ag || '<div class="empty">No leave, work-from-home or birthdays in the next 30 days.</div>');
 }
 
 function renderTasks() {
@@ -1267,14 +1285,16 @@ function renderTeam() {
   const dnames = S.settings.displayNames || {};
   const ab = S.settings.allowanceBy || {};
   const allowInput = id => `<input type="number" class="dn-input" data-allowfor="${esc(id)}" min="0" max="60" step="0.5" value="${ab[id] != null ? esc(ab[id]) : ''}" placeholder="${esc(String(Number(S.settings.allowance) || 0))}" aria-label="Paid leave days for ${esc(nm(id))}" title="Paid leave days this year. Leave empty to use the team default." style="width:72px;min-width:0;text-align:right" ${canAct() ? '' : 'disabled'}>`;
+  const bdInput = id => `<input class="dn-input" data-bdayfor="${esc(id)}" value="${esc(bdOf(id))}" placeholder="DD-MM" inputmode="numeric" maxlength="5" aria-label="Birthday of ${esc(nm(id))}" title="Birthday as day-month, e.g. 05-03 for 5 March" style="width:76px;min-width:0" ${canAct() ? '' : 'disabled'}>`;
+  const fmtBd = id => { const b = bdOf(id); if (!b) return '<span class="faint">—</span>'; const [d, mo] = b.split('-').map(Number); return esc(new Date(2000, mo - 1, d).toLocaleDateString([], {day: 'numeric', month: 'short'})); };
   const dnInput = id => `<input class="dn-input" data-dispname="${esc(id)}" value="${esc(dnames[id] || '')}" placeholder="${esc((S.names[id] && S.names[id].name) || 'Display name')}" aria-label="Display name" maxlength="40" ${canAct() ? '' : 'disabled'}>`;
-  setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Display name</th>' : ''}<th>Today</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken / allowed ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
+  setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Display name</th>' : ''}<th>Today</th><th>Birthday</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken / allowed ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
     ${ppl.map(id => {
       const s = todayStatus(id), lu = leaveUsed(id, year);
       const wfh = [...(S.att.get(id)?.values() || [])].filter(a => a.date && a.date.startsWith(m) && a.mode === 'wfh').length;
       const open = tasks.filter(x => x.uid === id && x.status !== 'done');
       const over = open.filter(x => x.due && x.due < todayKey()).length;
-      return `<tr><td>${who(id)}</td>${S.admin ? `<td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num" style="white-space:nowrap">${lu.used} / ${allowInput(id)}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
+      return `<tr><td>${who(id)}</td>${S.admin ? `<td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? bdInput(id) : fmtBd(id)}</td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num" style="white-space:nowrap">${lu.used} / ${allowInput(id)}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
       ${S.admin ? `<td style="text-align:right">${id !== S.me ? btn('remove', 'Remove', {uid: id, id: id}, null, 'small ghost') : ''}</td>` : ''}</tr>`;
     }).join('')}</tbody></table>` : '<div class="empty">No one has joined yet.</div>');
   if (S.admin) {
@@ -1625,9 +1645,13 @@ document.addEventListener('click', e => {
     }, status === 'approved' ? 'Approved' : 'Declined');
   }
   else if (act === 'add-person') {
-    const ex = S.roster.get(uid);
-    guard(() => ex ? S.db.doc('people/' + uid).update({removed: false, removedBy: ''}) : S.db.doc('people/' + uid).set({joined: Date.now(), addedBy: S.me}), 'Added to the team');
-    $('#add-q').value = ''; setHTML($('#add-results'), '');
+    const ex = S.roster.get(uid), rawBd = $('#add-bd').value.trim(), bd = rawBd ? parseBd(rawBd) : '';
+    if (bd === null) { toast('Enter the birthday as DD-MM, for example 05-03 for 5 March, or leave it empty.', true); $('#add-bd').focus(); return; }
+    guard(async () => {
+      await (ex ? S.db.doc('people/' + uid).update({removed: false, removedBy: ''}) : S.db.doc('people/' + uid).set({joined: Date.now(), addedBy: S.me}));
+      if (bd) await S.db.doc('settings/team').set({...S.settings, birthdays: {...(S.settings.birthdays || {}), [uid]: bd}});
+    }, bd ? 'Added to the team with their birthday' : 'Added to the team');
+    $('#add-q').value = ''; $('#add-bd').value = ''; setHTML($('#add-results'), '');
   }
 });
 
@@ -1693,6 +1717,14 @@ document.addEventListener('change', e => {
     if (raw === '') delete by[al.dataset.allowfor];
     else { const v = Number(raw); if (isNaN(v) || v < 0 || v > 60) { toast('Enter a number of days from 0 to 60.', true); return; } by[al.dataset.allowfor] = Math.round(v * 2) / 2; }
     guard(() => S.db.doc('settings/team').set({...S.settings, allowanceBy: by}), `Leave allowance saved for ${first(al.dataset.allowfor)}`);
+    return;
+  }
+  const bdi = e.target.closest && e.target.closest('[data-bdayfor]');
+  if (bdi && canAct() && S.admin) {
+    const id = bdi.dataset.bdayfor, raw = bdi.value.trim(), bd = raw ? parseBd(raw) : '';
+    if (bd === null) { toast('Enter the birthday as DD-MM, for example 05-03 for 5 March.', true); bdi.value = bdOf(id); return; }
+    const all = {...(S.settings.birthdays || {}), [id]: bd};
+    guard(() => S.db.doc('settings/team').set({...S.settings, birthdays: all}), bd ? `Birthday saved for ${first(id)}` : `Birthday cleared for ${first(id)}`);
     return;
   }
   const dn = e.target.closest && e.target.closest('[data-dispname]');

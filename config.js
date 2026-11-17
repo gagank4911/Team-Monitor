@@ -43,5 +43,20 @@ window.TRACKER_CONFIG = {
     "Chinmay": 3,  "Ankit": 3,   "Moumita": 3,
     "Uzma": 4,     "Vicky": 4,   "Surabhi": 4
   },
+  // Birthdays, shown on the calendar and in "Coming up". Day-month as "DD-MM", e.g. "05-03" for 5 March.
+  // Names must match "team" above. Leave a date empty ("") to hide that person's birthday.
+  // Managers can also set or change birthdays in the app (Team tab); a birthday set there wins over this list.
+  birthdays: {
+    "Sumit":   "",
+    "Gagan":   "",
+    "Uzma":    "",
+    "Shivani": "",
+    "Ankit":   "",
+    "Vicky":   "",
+    "Moumita": "",
+    "Aparna":  "",
+    "Chinmay": "",
+    "Surabhi": ""
+  },
   allowedEmailDomain: "1cell.ai"
 };
