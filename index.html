@@ -1507,7 +1507,8 @@ async function seedRoster() {
   seeded = true;
   for (const [id, name] of Object.entries(window.TD.nameOf)) {
     const ex = S.roster.get(id);
-    if (ex) { if (ex.removed && ex.removedBy === 'config') try { await S.db.doc('people/' + id).update({removed: false, removedBy: ''}); } catch (e) {} continue; }
+    // Bring back people hidden by the config clean-up (older versions didn't record who removed them)
+    if (ex) { if (ex.removed && (ex.removedBy === 'config' || ex.removedBy === undefined)) try { await S.db.doc('people/' + id).update({removed: false, removedBy: ''}); } catch (e) {} continue; }
     try { await S.db.doc('people/' + id).set({joined: Date.now(), name, addedBy: S.me}); } catch (e) {}
   }
   // Take people whose name was changed in (or removed from) config.js off the board
