@@ -35,5 +35,13 @@ window.TRACKER_CONFIG = {
     "Surbhi":    "surabhi.pednekar@1cell.ai"
   },
   admins: ["gagan.kumar@1cell.ai", "sumit.halder@1cell.ai"],
+  // Saturday duty groups. One group works each Saturday, in turn (1, 2, 3, 4, 1, ...).
+  // Applied the first time a manager signs in; after that, change groups in the Team tab.
+  saturdayGroups: {
+    "Sumit": 1,    "Aparna": 1,
+    "Gagan": 2,    "Shivani": 2,
+    "Chinmay": 3,  "Ankit": 3,   "Moumitha": 3,
+    "Uzma": 4,     "Viki": 4,    "Surbhi": 4
+  },
   allowedEmailDomain: "1cell.ai"
 };

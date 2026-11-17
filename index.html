@@ -562,16 +562,16 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
         <form id="settings-form" novalidate>
           <fieldset class="fs" id="settings-fs">
             <div class="row3">
-              <label class="field"><span>Paid leave days / year</span><input type="number" id="st-allow" min="0" max="60" step="0.5"></label>
+              <label class="field"><span>Default paid leave days / year</span><input type="number" id="st-allow" min="0" max="60" step="0.5"></label>
               <label class="field"><span>Expected hours / day</span><input type="number" id="st-hours" min="1" max="14" step="0.5"></label>
               <label class="field"><span>Max away per day</span><input type="number" id="st-max" min="1" max="20" step="1"></label>
             </div>
-            <p class="muted" style="margin:0">Max away per day: once this many people have asked for leave or WFH on a date, anyone else who asks gets a warning and their request is flagged in red.</p>
+            <p class="muted" style="margin:0">Set a different number of leave days for one person in the "Leave taken / allowed" column above; leave it empty to use the default. Max away per day: once this many people have asked for leave or WFH on a date, anyone else who asks gets a warning and their request is flagged in red.</p>
             <div class="row2">
               <label class="field"><span>Saturday rota: on</span><input type="date" id="st-anchor"></label>
               <label class="field"><span>the group on duty is</span><select id="st-anchor-group"><option value="1">Group 1</option><option value="2">Group 2</option><option value="3">Group 3</option><option value="4">Group 4</option><option value="5">Group 5</option></select></label>
             </div>
-            <p class="muted" style="margin:0">Sundays are off. Each Saturday one group of 2 works, in turn (1 → 2 → 3 → 4 → 5 → 1); everyone else is on leave. Put exactly two people in each group in the Team overview table above.</p>
+            <p class="muted" style="margin:0">Sundays are off. Each Saturday one group works, in turn (1 → 2 → 3 → 4 → 1); everyone else is off. Set each person's group in the Team overview table above.</p>
             <div class="form-foot"><span class="muted">Days under the expected hours are flagged in timesheets.</span><button class="btn primary" type="submit">Save settings</button></div>
           </fieldset>
         </form>
@@ -594,7 +594,7 @@ const DOMAIN = String(CFG.allowedEmailDomain || '').toLowerCase().replace(/^@/, 
 const slug = n => String(n).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const byEmail = {}, nameOf = {}, emailOf = {};
 for (const [name, email] of Object.entries(TEAM)) { const id = slug(name), em = String(email).trim().toLowerCase(); byEmail[em] = id; nameOf[id] = name; emailOf[id] = em; }
-window.TD = {nameOf, emailOf};
+window.TD = {nameOf, emailOf, slug};
 
 let resolveCtx;
 const ctxP = new Promise(r => { resolveCtx = r; });
@@ -696,7 +696,7 @@ const fmtShort = k => pkey(k).toLocaleDateString([], {day: 'numeric', month: 'sh
 const fmtMonth = m => pkey(m + '-01').toLocaleDateString([], {month: 'long', year: 'numeric'});
 /* Sundays are off. Each Saturday one rota group works (about 30% of the team), rotating weekly from settings.satAnchor. */
 const DAY = 86400000;
-function satGroupCount() { const v = Object.values(S.settings.satGroup || {}).map(Number).filter(Boolean); return Math.max(5, ...v, 1); }
+function satGroupCount() { const v = Object.values(S.settings.satGroup || {}).map(Number).filter(Boolean); return Math.max(1, ...v); }
 function satGroupOn(k) {
   const anchor = S.settings.satAnchor || '2026-11-21';
   const weeks = Math.round((pkey(k) - pkey(anchor)) / (7 * DAY));
@@ -880,6 +880,11 @@ function todayStatus(uid) {
 }
 /* ---- team rules: 1 WFH per week, 67% office attendance, overtime ---- */
 const TARGET = 0.67;
+/* Paid leave days a person gets this year: the manager's number for them, or the team default. */
+function allowOf(id) {
+  const v = (S.settings.allowanceBy || {})[id];
+  return v != null && v !== '' && !isNaN(Number(v)) ? Number(v) : (Number(S.settings.allowance) || 0);
+}
 const weekOf = k => { const d = pkey(k); const m = addDays(d, -((d.getDay() + 6) % 7)); return Array.from({length: 7}, (_, i) => dkey(addDays(m, i))); };
 function wfhDays(uid, k, exclude) {
   const out = new Set();
@@ -1048,7 +1053,7 @@ function renderLeave() {
   if (!ready()) return;
   const year = String(new Date().getFullYear());
   const {used, pending} = leaveUsed(S.me, year);
-  const allow = Number(S.settings.allowance) || 0;
+  const allow = allowOf(S.me);
   $('#bal-year').textContent = year;
   setHTML($('#balance'), `<div><b>${allow}</b><span>Allowed</span></div><div><b>${used}</b><span>Taken</span></div><div><b>${pending}</b><span>Awaiting approval</span></div><div><b>${Math.max(0, allow - used)}</b><span>Remaining</span></div>`);
 
@@ -1076,7 +1081,7 @@ function renderLeave() {
       const fl = flagDates(r);
       const others = fl.length ? [...new Set((S.clash.byDate.get(fl[0]) || []).filter(x => x.uid !== r.uid && (x.createdAt || 0) < (r.createdAt || 0)).map(x => first(x.uid)))] : [];
       return `<div class="item ${fl.length ? 'flagged' : ''}"><div class="main">${who(r.uid)}<div class="title">${desc(r)} · ${range(r)}</div>
-      <div class="meta"><span>${workDays(r.from, r.to, r.half, r.uid)} working day(s)</span>${lu ? `<span>${lu.used} of ${allow} days taken in ${yr}</span>` : ''}${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
+      <div class="meta"><span>${workDays(r.from, r.to, r.half, r.uid)} working day(s)</span>${lu ? `<span>${lu.used} of ${allowOf(r.uid)} days taken in ${yr}${lu.used + workDays(r.from, r.to, r.half, r.uid) > allowOf(r.uid) && r.category !== 'unpaid' ? ' · <b style="color:var(--danger)">over their allowance</b>' : ''}</span>` : ''}${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
       ${fl.length ? `<div class="meta"><span class="chip danger">Over the limit on ${esc(listDates(fl))}</span>${others.length ? `<span>Already away: ${esc(others.join(', '))}</span>` : ''}</div>` : ''}
       ${wfhFlag(r)}</div>
       <div class="acts">${btn('approve', 'Approve', r, 'approved', 'small ok')}${btn('approve', 'Decline', r, 'rejected', 'small no')}</div></div>`;
@@ -1117,7 +1122,7 @@ function renderCalendar() {
     list.forEach(r => { if (r.type === 'wfh') wfhDays++; else leaveDays++; if (r.status === 'pending') pend++; });
     list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     const crew = sat ? satCrew(k) : [];
-    const satLine = sat ? `<span class="rota ${crew.length !== 2 ? 'short' : ''}" title="Saturday duty: Group ${satGroupOn(k)}${crew.length !== 2 ? ' (should be 2 people)' : ''}">G${satGroupOn(k)}: ${crew.length ? esc(crew.map(first).join(', ')) : 'no one assigned'}${crew.length && crew.length !== 2 ? ` (${crew.length})` : ''}</span>` : '';
+    const satLine = sat ? `<span class="rota ${crew.length ? '' : 'short'}" title="Saturday duty: Group ${satGroupOn(k)}">G${satGroupOn(k)}: ${crew.length ? esc(crew.map(first).join(', ')) : 'no one assigned'}</span>` : '';
     html += `<div class="day ${sun || sat ? 'wk' : ''} ${k < t ? 'past' : ''} ${k === t ? 'today' : ''} ${over ? 'over' : ''}">
       <div class="dhead"><span class="dn">${d.getDate()}</span>${sun ? '<span class="cnt">Off</span>' : list.length ? `<span class="cnt">${list.length} away</span>` : ''}</div>${satLine}${list.map(r => chip(r)).join('')}</div>`;
   }
@@ -1260,14 +1265,16 @@ function renderTeam() {
   const sg = S.settings.satGroup || {};
   const satSel = id => `<select data-satgroup="${esc(id)}" aria-label="Saturday group" style="width:auto" ${canAct() ? '' : 'disabled'}><option value="">None</option>${[1, 2, 3, 4, 5].map(g => `<option value="${g}" ${Number(sg[id]) === g ? 'selected' : ''}>Group ${g}</option>`).join('')}</select>`;
   const dnames = S.settings.displayNames || {};
+  const ab = S.settings.allowanceBy || {};
+  const allowInput = id => `<input type="number" class="dn-input" data-allowfor="${esc(id)}" min="0" max="60" step="0.5" value="${ab[id] != null ? esc(ab[id]) : ''}" placeholder="${esc(String(Number(S.settings.allowance) || 0))}" aria-label="Paid leave days for ${esc(nm(id))}" title="Paid leave days this year. Leave empty to use the team default." style="width:72px;min-width:0;text-align:right" ${canAct() ? '' : 'disabled'}>`;
   const dnInput = id => `<input class="dn-input" data-dispname="${esc(id)}" value="${esc(dnames[id] || '')}" placeholder="${esc((S.names[id] && S.names[id].name) || 'Display name')}" aria-label="Display name" maxlength="40" ${canAct() ? '' : 'disabled'}>`;
-  setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Display name</th>' : ''}<th>Today</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
+  setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Display name</th>' : ''}<th>Today</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken / allowed ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
     ${ppl.map(id => {
       const s = todayStatus(id), lu = leaveUsed(id, year);
       const wfh = [...(S.att.get(id)?.values() || [])].filter(a => a.date && a.date.startsWith(m) && a.mode === 'wfh').length;
       const open = tasks.filter(x => x.uid === id && x.status !== 'done');
       const over = open.filter(x => x.due && x.due < todayKey()).length;
-      return `<tr><td>${who(id)}</td>${S.admin ? `<td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num">${lu.used} / ${allow}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
+      return `<tr><td>${who(id)}</td>${S.admin ? `<td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num" style="white-space:nowrap">${lu.used} / ${allowInput(id)}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
       ${S.admin ? `<td style="text-align:right">${id !== S.me ? btn('remove', 'Remove', {uid: id, id: id}, null, 'small ghost') : ''}</td>` : ''}</tr>`;
     }).join('')}</tbody></table>` : '<div class="empty">No one has joined yet.</div>');
   if (S.admin) {
@@ -1502,6 +1509,19 @@ async function seedRoster() {
     if (S.roster.has(id)) continue;
     try { await S.db.doc('people/' + id).set({joined: Date.now(), name, addedBy: S.me}); } catch (e) {}
   }
+  // Saturday groups from config.js, applied once while no groups have been set in the app
+  const cfg = (window.TRACKER_CONFIG || {}).saturdayGroups || {};
+  const sg = {};
+  for (const [name, g] of Object.entries(cfg)) { const id = window.TD.slug(name); if (window.TD.nameOf[id] && Number(g)) sg[id] = Number(g); }
+  if (!Object.keys(sg).length) return;
+  try {
+    const cur = await S.db.doc('settings/team').get();
+    const have = cur.exists ? (cur.data().satGroup || {}) : {};
+    if (Object.keys(have).length) return;
+    const base = cur.exists ? cur.data() : {allowance: S.settings.allowance, hours: S.settings.hours, maxAway: S.settings.maxAway};
+    await S.db.doc('settings/team').set({...base, satGroup: sg, satAnchor: base.satAnchor || '2026-11-21', satAnchorGroup: base.satAnchorGroup || 1});
+    toast('Saturday groups set from config.js');
+  } catch (e) {}
 }
 function subscribeCore() {
   const timer = setTimeout(() => { if (S.status === 'loading') { S.status = 'offline'; renderAll(); } }, 10000);
@@ -1651,6 +1671,14 @@ $('#settings-form').addEventListener('submit', e => {
   guard(() => S.db.doc('settings/team').set({...S.settings, allowance, hours, maxAway: max, satAnchor: anchor, satAnchorGroup: anchorGroup}), 'Settings saved');
 });
 document.addEventListener('change', e => {
+  const al = e.target.closest && e.target.closest('[data-allowfor]');
+  if (al && canAct() && S.admin) {
+    const by = {...(S.settings.allowanceBy || {})}, raw = al.value.trim();
+    if (raw === '') delete by[al.dataset.allowfor];
+    else { const v = Number(raw); if (isNaN(v) || v < 0 || v > 60) { toast('Enter a number of days from 0 to 60.', true); return; } by[al.dataset.allowfor] = Math.round(v * 2) / 2; }
+    guard(() => S.db.doc('settings/team').set({...S.settings, allowanceBy: by}), `Leave allowance saved for ${first(al.dataset.allowfor)}`);
+    return;
+  }
   const dn = e.target.closest && e.target.closest('[data-dispname]');
   if (dn && canAct() && S.admin) {
     const names = {...(S.settings.displayNames || {})}, v = dn.value.trim().slice(0, 40);
