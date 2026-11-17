@@ -28,7 +28,7 @@ window.TRACKER_CONFIG = {
     "Uzma":      "uzma.farooque@1cell.ai",
     "Shivani":   "shivani.rai@1cell.ai",
     "Ankit":     "ankit.yadav@1cell.ai",
-    "Vicki":     "vicky.jha@1cell.ai",
+    "Vicky":     "vicky.jha@1cell.ai",
     "Moumita":   "moumita.roy@1cell.ai",
     "Aparna":    "aparna.sornapudi@1cell.ai",
     "Chinmay":   "chinmay.koppal@1cell.ai",
@@ -41,7 +41,7 @@ window.TRACKER_CONFIG = {
     "Sumit": 1,    "Aparna": 1,
     "Gagan": 2,    "Shivani": 2,
     "Chinmay": 3,  "Ankit": 3,   "Moumita": 3,
-    "Uzma": 4,     "Vicki": 4,   "Surabhi": 4
+    "Uzma": 4,     "Vicky": 4,   "Surabhi": 4
   },
   allowedEmailDomain: "1cell.ai"
 };

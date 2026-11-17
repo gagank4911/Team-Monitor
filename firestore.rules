@@ -20,7 +20,7 @@ service cloud.firestore {
         'uzma':         'uzma.farooque@1cell.ai',
         'shivani':      'shivani.rai@1cell.ai',
         'ankit':        'ankit.yadav@1cell.ai',
-        'vicki':        'vicky.jha@1cell.ai',
+        'vicky':        'vicky.jha@1cell.ai',
         'moumita':      'moumita.roy@1cell.ai',
         'aparna':       'aparna.sornapudi@1cell.ai',
         'chinmay':      'chinmay.koppal@1cell.ai',
