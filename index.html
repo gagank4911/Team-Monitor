@@ -2079,10 +2079,21 @@ document.addEventListener('click', e => {
   }
   else if (act === 'approve') {
     const r = S.reqs.get(uid)?.get(id); if (!r) return;
+    let back = [];
     guard(async () => {
       await S.db.doc(`approvals/${uid}/items/${id}`).set({decision: status, type: r.type, from: r.from, to: r.to, half: !!r.half, by: S.me, at: Date.now()});
       if (status === 'rejected' && r.holdId) await S.db.doc('holds/' + r.holdId).delete().catch(() => {});
-    }, status === 'approved' ? 'Approved' : 'Declined');
+      // Approving full-day leave for days the person already checked in on: those days go back to their balance,
+      // the same as checking in on a day of leave that was already approved.
+      if (status === 'approved' && r.type === 'leave' && !r.half) {
+        const s = await S.db.collection(`people/${uid}/attendance`).where('date', '>=', r.from).where('date', '<=', r.to).get();
+        const days = s.docs.map(d => d.data()).filter(a => a && a.inAt && a.date).map(a => a.date).filter(k => !workedSet(r).has(k));
+        if (days.length) await S.db.doc(`leave/${uid}/requests/${id}`).update({worked: firebase.firestore.FieldValue.arrayUnion(...days)});
+        back = days;
+      }
+    }, status === 'approved' ? null : 'Declined').then(ok => {
+      if (ok && status === 'approved') toast(back.length ? `Approved. ${first(uid)} worked on ${listDates(back.sort())}, so ${back.length === 1 ? 'that day goes' : 'those days go'} back to their balance.` : 'Approved');
+    });
   }
 });
 
