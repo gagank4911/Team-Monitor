@@ -167,6 +167,10 @@ form .fs{display:flex;flex-direction:column;gap:12px}
 .trow{display:grid;grid-template-columns:minmax(120px,1.1fr) 150px minmax(120px,2fr) 150px;gap:12px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
 .trow.head{border-top:0;padding:0 0 4px;font-size:11px;color:var(--faint)}
 .trow .times{font-size:12.5px;color:var(--muted);text-align:right}
+a.chip.geo{text-decoration:none}
+a.chip.geo:hover{text-decoration:underline}
+.trow .times .geo{margin-top:3px}
+.geo-cell{display:flex;flex-direction:column;gap:3px;align-items:flex-start}
 .tl{position:relative;height:10px;background:var(--sunk);border-radius:5px}
 .tl .span{position:absolute;top:0;bottom:0;border-radius:5px;background:var(--office);min-width:4px}
 .tl .span.wfh{background:var(--wfh)}
@@ -612,10 +616,16 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
               <label class="field"><span>the group on duty is</span><select id="st-anchor-group"><option value="1">Group 1</option><option value="2">Group 2</option><option value="3">Group 3</option><option value="4">Group 4</option><option value="5">Group 5</option></select></label>
             </div>
             <p class="muted" style="margin:0">Sundays are off. Each Saturday one group works, in turn (1 → 2 → 3 → 4 → 1); everyone else is off. Set each person's group in the Team overview table above.</p>
+            <div class="row3">
+              <label class="field"><span>Office latitude</span><input type="number" id="st-olat" step="any" min="-90" max="90" placeholder="e.g. 28.4595"></label>
+              <label class="field"><span>Office longitude</span><input type="number" id="st-olng" step="any" min="-180" max="180" placeholder="e.g. 77.0266"></label>
+              <label class="field"><span>Counts as office within (m)</span><input type="number" id="st-orad" min="50" max="5000" step="10" placeholder="300"></label>
+            </div>
+            <div class="fixrow" style="margin-top:0"><button class="btn small" type="button" id="st-ohere">Use my current location</button><span class="muted">Check-in locations are compared with this. An "Office" check-in farther away is shown in red. Leave empty to only show each location on a map.</span></div>
             <div class="form-foot"><span class="muted">Days under the expected hours are flagged in timesheets.</span><button class="btn primary" type="submit">Save settings</button></div>
           </fieldset>
         </form>
-        <div class="note" style="margin-top:14px">Team members and managers are set in <b>config.js</b> and <b>firestore.rules</b>. Members can check in, request leave and update their own tasks, and see only their own leave requests. Managers can see the team calendar, approve leave, assign tasks to anyone, plan team bonding and change these settings.</div>
+        <div class="note" style="margin-top:14px">Team members and managers are set in <b>config.js</b> and <b>firestore.rules</b>. Members can check in, request leave and update their own tasks, and see only their own leave requests and check-in locations. Managers can see everyone's check-in locations, the team calendar, approve leave, assign tasks to anyone, plan team bonding and change these settings.</div>
       </div>
     </div>
   </section>
@@ -815,6 +825,15 @@ function workDays(from, to, half, uid) {
   for (let d = pkey(from); dkey(d) <= to; d = addDays(d, 1)) if (isWorkDay(uid, d)) n++;
   return n;
 }
+/* Working on a day of approved full-day leave cancels the leave for that day only. Those days are listed in the
+   request's `worked` (the request's dates stay as approved, so the approval still matches). */
+const workedSet = r => new Set(r && r.type === 'leave' && !r.half && Array.isArray(r.worked) ? r.worked : []);
+/* Working days a request still takes, leaving out the days worked anyway. */
+function reqDays(r) {
+  const n = workDays(r.from, r.to, r.half, r.uid), w = workedSet(r);
+  let x = 0; w.forEach(k => { if (k >= r.from && k <= r.to && isWorkDay(r.uid, pkey(k))) x++; });
+  return Math.max(0, n - x);
+}
 const WINDOW_DAYS = 100;
 const windowStart = () => dkey(addDays(new Date(), -WINDOW_DAYS));
 const CAT = {casual: 'Casual', sick: 'Sick', earned: 'Earned', unpaid: 'Unpaid'};
@@ -832,7 +851,7 @@ const S = {
   subs: new Map(), registering: false,
   view: 'today', mode: null, applyType: 'leave',
   calMonth: mkey(new Date()), taskFilter: 'mine',
-  ts: {person: null, month: mkey(new Date())}, tsCache: new Map(), tsLoading: new Set(), regForm: null,
+  ts: {person: null, month: mkey(new Date())}, tsCache: new Map(), tsLoading: new Set(), regForm: null, geo: new Map(),
   busy: false,
 };
 
@@ -895,7 +914,8 @@ function computeClash() {
   const byDate = new Map(), flagged = new Map();
   for (const r of allReqs()) {
     if (r.status !== 'pending' && r.status !== 'approved') continue;
-    eachWorkDay(r.from, r.to, k => { if (!byDate.has(k)) byDate.set(k, []); byDate.get(k).push(r); }, r.uid);
+    const w = workedSet(r);
+    eachWorkDay(r.from, r.to, k => { if (w.has(k)) return; if (!byDate.has(k)) byDate.set(k, []); byDate.get(k).push(r); }, r.uid);
   }
   for (const [k, list] of byDate) {
     list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -937,14 +957,26 @@ function allReqs() {
   }
   return out;
 }
-function reqOn(uid, day, type, statuses = ['approved']) {
+/* withWorked: also return leave the person cancelled for that day by working (see workedSet). */
+function reqOn(uid, day, type, statuses = ['approved'], withWorked = false) {
   const m = S.reqs.get(uid); if (!m) return null;
   for (const [id, r] of m) {
     if (r.type !== type || !(r.from <= day && day <= r.to)) continue;
+    if (!withWorked && workedSet(r).has(day)) continue;
     const st = reqStatus(uid, id, r);
     if (statuses.includes(st)) return {id, ...r, status: st};
   }
   return null;
+}
+/* Approved full-day leave on that day, worked or not. */
+function fullLeaveOn(uid, day) { const l = reqOn(uid, day, 'leave', ['approved'], true); return l && !l.half ? l : null; }
+/* Cancels day k of an approved full-day leave because the person worked it: the day goes back to their balance
+   and comes off the team's "away" count. r is a request as returned by reqOn/fullLeaveOn. */
+async function markWorked(uid, r, k) {
+  if (!r || r.half || workedSet(r).has(k)) return;
+  await S.db.doc(`leave/${uid}/requests/${r.id}`).update({worked: firebase.firestore.FieldValue.arrayUnion(k)});
+  const h = r.holdId && S.holds.get(r.holdId);
+  if (h && Array.isArray(h.days)) await S.db.doc('holds/' + r.holdId).update({days: h.days.filter(x => x !== k)}).catch(() => {});
 }
 function allTasks() {
   const out = [];
@@ -958,7 +990,7 @@ function leaveUsed(uid, year) {
   let used = 0, pending = 0;
   for (const r of allReqs()) {
     if (r.uid !== uid || r.type !== 'leave' || r.category === 'unpaid' || !String(r.from).startsWith(year)) continue;
-    const n = workDays(r.from, r.to, r.half, uid);
+    const n = reqDays(r);
     if (r.status === 'approved') used += n; else if (r.status === 'pending') pending += n;
   }
   return {used, pending};
@@ -1006,7 +1038,7 @@ function wfhDays(uid, k, exclude) {
   const out = new Set();
   for (const day of weekOf(k)) {
     const a = S.att.get(uid)?.get(day);
-    if (a && a.inAt && a.mode === 'wfh') out.add(day);
+    if (a && a.inAt && a.mode === 'wfh' && !fullLeaveOn(uid, day)) out.add(day); // working on a leave day isn't a WFH day
     const m = S.reqs.get(uid);
     if (m) for (const [id, r] of m) {
       if (id === exclude || r.type !== 'wfh' || r.cancelled) continue;
@@ -1034,6 +1066,7 @@ function officeStats(uid, from, to) {
     const a = S.att.get(uid)?.get(k), inn = a && a.inAt;
     if (k === t && !inn) continue;
     if (!inn && reqOn(uid, k, 'leave')) continue;
+    if (inn && fullLeaveOn(uid, k)) continue; // worked on a leave day: left out, like other leave days
     base++; if (inn && a.mode !== 'wfh') office++;
   }
   return {base, office, pct: base ? office / base : null};
@@ -1044,6 +1077,50 @@ function extraMs(uid, a) {
   const w = a.outAt - a.inAt;
   if (!isWorkDay(uid, pkey(a.date))) return w;
   return Math.max(0, w - (Number(S.settings.hours) || 8) * 3600000);
+}
+/* ---- location at check-in / check-out ----
+   Taken once when someone checks in or out (never in the background) and kept in people/{pid}/geo/{day}
+   as {date, in, out}; each is {lat, lng, acc, at} or {err, at}. Only managers and the person can read it. */
+function getLocation() {
+  return new Promise(res => {
+    if (!navigator.geolocation) { res({err: 'unsupported'}); return; }
+    navigator.geolocation.getCurrentPosition(
+      p => res({lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy)}),
+      e => res({err: e.code === 1 ? 'denied' : e.code === 3 ? 'timeout' : 'unavailable'}),
+      {enableHighAccuracy: true, timeout: 15000, maximumAge: 60000});
+  });
+}
+/* Records where I am for check-in or check-out of day k, then warns if an office check-in is far from the office. */
+async function captureLocation(k, which, mode) {
+  const g = {...await getLocation(), at: Date.now()};
+  try { await S.db.doc(`people/${S.me}/geo/${k}`).set({date: k, [which]: g}, {merge: true}); } catch (e) { return; }
+  const gi = geoInfo(g, mode);
+  if (g.err === 'denied') toast('Location not shared. Allow location for this site so your manager can see where you checked ' + which + ' from.', true);
+  else if (gi && gi.flag) toast(`You checked ${which} as Office but you're ${gi.label}.`, true);
+}
+const officeLoc = () => { const o = S.settings.office; return o && typeof o.lat === 'number' && typeof o.lng === 'number' && isFinite(o.lat) && isFinite(o.lng) ? {lat: o.lat, lng: o.lng, r: Math.max(50, Number(o.radius) || 300)} : null; };
+function distM(a, b) {
+  const R = 6371000, rad = x => x * Math.PI / 180, dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const fmtDist = m => m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`;
+/* What to show for one location: label, colour, map link, and flag = "Office" check-in away from the office. */
+function geoInfo(g, mode) {
+  if (!g) return null;
+  if (g.err) return {label: g.err === 'denied' ? 'Location not shared' : 'Location unavailable', cls: g.err === 'denied' ? 'danger' : '', flag: false};
+  const o = officeLoc(), url = `https://www.google.com/maps?q=${g.lat},${g.lng}`;
+  const title = `${g.lat}, ${g.lng} (accurate to about ${fmtDist(g.acc)})`;
+  if (!o) return {label: 'On map', cls: '', url, title, flag: false};
+  const d = distM(g, o), near = d <= o.r + Math.min(g.acc || 0, 200);
+  return {label: near ? 'At office' : `${fmtDist(d)} from office`, cls: near ? 'office' : mode === 'office' ? 'danger' : 'wfh', url, title, flag: !near && mode === 'office'};
+}
+const geoOf = (uid, k) => S.geo.get(uid)?.get(k) || null;
+const geoText = (g, mode) => { const gi = geoInfo(g, mode); return !gi ? '' : g.err ? gi.label : `${g.lat}, ${g.lng}${officeLoc() ? ' (' + gi.label + ')' : ''}`; };
+function geoChip(g, mode, prefix = '') {
+  const gi = geoInfo(g, mode); if (!gi) return '';
+  const txt = esc(prefix + gi.label);
+  return gi.url ? `<a class="chip ${gi.cls} nodot geo" href="${esc(gi.url)}" target="_blank" rel="noopener" title="${esc(gi.title)}${gi.flag ? ' · checked in as Office' : ''}">${txt}</a>` : `<span class="chip ${gi.cls} nodot geo">${txt}</span>`;
 }
 /* ---- regularization: fixing a day someone forgot to check in (or out) ----
    Stored on the day's attendance record as `reg` {inAt, outAt, mode, reason, at, by, status}.
@@ -1109,7 +1186,7 @@ async function submitReg(pid, k, f) {
   const ref = S.db.doc(`people/${pid}/attendance/${k}`), now = Date.now();
   const reg = {inAt, outAt, mode, reason, at: now, by: S.me};
   const done = () => S.tsCache.delete(pid + '|' + k.slice(0, 7));
-  if (S.admin) return guard(() => ref.set({date: k, inAt, outAt, mode, regularized: true, reg: {...reg, status: 'approved', decidedBy: S.me, decidedAt: now}}, {merge: true}).then(done),
+  if (S.admin) return guard(() => ref.set({date: k, inAt, outAt, mode, regularized: true, reg: {...reg, status: 'approved', decidedBy: S.me, decidedAt: now}}, {merge: true}).then(() => markWorked(pid, fullLeaveOn(pid, k), k)).then(done),
     `${fmtShort(k)} regularized${pid !== S.me ? ' for ' + first(pid) : ''}`);
   return guard(() => ref.set({date: k, reg: {...reg, status: 'pending', decidedBy: null, decidedAt: null}}, {merge: true}).then(done),
     'Sent to your manager for approval');
@@ -1138,7 +1215,7 @@ function fillRegTab(force) {
 function regFormHTML() {
   const f = S.regForm, today = f.k === todayKey();
   const direct = S.admin;
-  return `<tr class="regrow"><td colspan="9"><div class="note">
+  return `<tr class="regrow"><td colspan="10"><div class="note">
     <b>${direct ? 'Regularize' : 'Ask to regularize'} ${esc(fmtDay(f.k))}</b>${f.uid !== S.me ? ` for ${esc(first(f.uid))}` : ''}
     <div class="fixrow">
       <label class="muted" for="reg-in">In</label><input type="time" id="reg-in" data-regf="in" value="${esc(f.in)}">
@@ -1197,12 +1274,13 @@ function renderToday() {
       <button type="button" data-act="mode" data-mode="office" aria-pressed="${S.mode === 'office'}">Office</button>
       <button type="button" data-act="mode" data-mode="wfh" aria-pressed="${S.mode === 'wfh'}">Home</button></div>`;
     html = `<div class="hello">${hello}</div>
-      ${lv ? `<div class="note warn">You're on approved ${lv.half ? 'half-day ' : ''}leave today.</div>` : wf ? `<div class="note">Your work-from-home request for today is approved.</div>` : `<div class="muted">You haven't checked in yet today.</div>`}
-      <div class="punch-actions">${seg}<button class="btn primary big" type="button" data-act="checkin" ${canAct() ? '' : 'disabled'}>${lv && !lv.half ? 'Check in anyway' : 'Check in'}</button></div>`;
+      ${lv ? `<div class="note warn">You're on approved ${lv.half ? 'half-day ' : ''}leave today.${lv.half ? '' : ' If you work anyway, check in: today\'s leave is cancelled and the day goes back to your leave balance.'}</div>` : wf ? `<div class="note">Your work-from-home request for today is approved.</div>` : `<div class="muted">You haven't checked in yet today.</div>`}
+      <div class="punch-actions">${seg}<button class="btn primary big" type="button" data-act="checkin" ${canAct() ? '' : 'disabled'}>${lv && !lv.half ? 'Check in and cancel today\'s leave' : 'Check in'}</button></div>
+      <div class="faint" style="font-size:12px">Your location is recorded once when you check in and once when you check out. Only managers can see it.</div>`;
   } else if (!a.outAt) {
     html = `<div class="hello">${hello}</div>
       <div><div class="clock">${esc(fmtDur(now - a.inAt))}<small>so far</small></div>
-      <div class="muted">Checked in at <span class="mono">${esc(fmtTime(a.inAt))}</span> · <span class="chip ${a.mode === 'wfh' ? 'wfh' : 'office'}">${a.mode === 'wfh' ? 'Home' : 'Office'}</span></div></div>
+      <div class="muted">Checked in at <span class="mono">${esc(fmtTime(a.inAt))}</span> · <span class="chip ${a.mode === 'wfh' ? 'wfh' : 'office'}">${a.mode === 'wfh' ? 'Home' : 'Office'}</span> ${geoChip(geoOf(S.me, t)?.in, a.mode)}</div></div>
       <div class="punch-actions"><button class="btn primary big" type="button" data-act="checkout" ${canAct() ? '' : 'disabled'}>Check out</button></div>`;
   } else {
     const short = (a.outAt - a.inAt) / 3600000 < S.settings.hours;
@@ -1259,7 +1337,8 @@ function renderToday() {
   setHTML($('#team-today'), ppl.length ? `<div class="trow head"><span>Person</span><span>Status</span><div class="ticks">${ticks}</div><span style="text-align:right">Hours</span></div>` + st.map(x => {
     const a = x.a;
     const bar = a && a.inAt ? `<div class="span ${a.mode === 'wfh' ? 'wfh' : ''} ${a.outAt ? '' : 'open'}" style="left:${pos(a.inAt)}%;width:${Math.max(0.6, pos(a.outAt || now) - pos(a.inAt))}%"></div>` : '';
-    const times = a && a.inAt ? `<span class="mono">${esc(fmtTime(a.inAt))} – ${a.outAt ? esc(fmtTime(a.outAt)) : 'now'} · ${esc(fmtDur((a.outAt || now) - a.inAt))}</span>` : '<span class="faint">—</span>';
+    const gl = a && a.inAt && (S.admin || x.id === S.me) ? geoChip(geoOf(x.id, t)?.in, a.mode) : '';
+    const times = a && a.inAt ? `<span class="mono">${esc(fmtTime(a.inAt))} – ${a.outAt ? esc(fmtTime(a.outAt)) : 'now'} · ${esc(fmtDur((a.outAt || now) - a.inAt))}</span>${gl ? ' ' + gl : ''}` : '<span class="faint">—</span>';
     return `<div class="trow">${who(x.id)}<span><span class="chip ${chipClass(x.k)}">${esc(x.label)}</span></span><div class="tl">${bar}<div class="now" style="left:${nowPos}%" title="Now"></div></div><div class="times">${times}</div></div>`;
   }).join('') : `<div class="empty">No one has joined yet. Teammates appear here the first time they open this page.</div>`);
 }
@@ -1302,7 +1381,7 @@ function renderLeave() {
   const leaveItem = r => {
     const fl = flagDates(r);
     return `<div class="item ${fl.length ? 'flagged' : ''}"><div class="main"><div class="title">${desc(r)} · ${range(r)}</div>
-    <div class="meta">${stChip(r.status)}<span>${workDays(r.from, r.to, r.half, r.uid)} working day${workDays(r.from, r.to, r.half, r.uid) === 1 ? '' : 's'}</span>${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
+    <div class="meta">${stChip(r.status)}<span>${reqDays(r)} working day${reqDays(r) === 1 ? '' : 's'}</span>${workedSet(r).size ? `<span class="chip accent nodot" title="These days were cancelled because you checked in, and went back to your balance">Worked ${esc(listDates([...workedSet(r)].sort()))}</span>` : ''}${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
     ${fl.length ? `<div class="meta"><span class="chip danger">Flagged: ${maxAway()} or more people were already away on ${esc(listDates(fl))}</span></div>` : ''}
     ${wfhFlag(r)}</div>
     <div class="acts">${(r.status === 'pending' || r.status === 'approved') && r.to >= t ? btn('req-cancel', 'Cancel', r) : ''}</div></div>`;
@@ -1328,7 +1407,7 @@ function renderLeave() {
       const fl = flagDates(r);
       const others = fl.length ? [...new Set((S.clash.byDate.get(fl[0]) || []).filter(x => x.uid !== r.uid && (x.createdAt || 0) < (r.createdAt || 0)).map(x => first(x.uid)))] : [];
       return `<div class="item ${fl.length ? 'flagged' : ''}"><div class="main">${who(r.uid)}<div class="title">${desc(r)} · ${range(r)}</div>
-      <div class="meta"><span>${workDays(r.from, r.to, r.half, r.uid)} working day(s)</span>${lu ? `<span>${lu.used} of ${totalOf(r.uid, yr)} days taken in ${yr}${carryOf(r.uid, yr) ? ` (incl. ${carryOf(r.uid, yr)} carried forward)` : ''}${lu.used + workDays(r.from, r.to, r.half, r.uid) > totalOf(r.uid, yr) && r.category !== 'unpaid' ? ' · <b style="color:var(--danger)">over their allowance</b>' : ''}</span>` : ''}${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
+      <div class="meta"><span>${reqDays(r)} working day(s)</span>${lu ? `<span>${lu.used} of ${totalOf(r.uid, yr)} days taken in ${yr}${carryOf(r.uid, yr) ? ` (incl. ${carryOf(r.uid, yr)} carried forward)` : ''}${lu.used + reqDays(r) > totalOf(r.uid, yr) && r.category !== 'unpaid' ? ' · <b style="color:var(--danger)">over their allowance</b>' : ''}</span>` : ''}${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
       ${fl.length ? `<div class="meta"><span class="chip danger">Over the limit on ${esc(listDates(fl))}</span>${others.length ? `<span>Already away: ${esc(others.join(', '))}</span>` : ''}</div>` : ''}
       ${wfhFlag(r)}</div>
       <div class="acts">${btn('approve', 'Approve', r, 'approved', 'small ok')}${btn('approve', 'Decline', r, 'rejected', 'small no')}</div></div>`;
@@ -1474,7 +1553,9 @@ function timesheetRows(uid, m) {
     else { status = k === t ? 'Not in yet' : 'No record'; }
     const rs = a && a.reg ? a.reg.status : '';
     const reg = rs === 'pending' ? 'Regularization pending' : rs === 'approved' && a.regularized ? 'Regularized' : rs === 'rejected' ? 'Regularization declined' : '';
-    return {k, status, mode, inT, outT, hrs, cls, ex, ot, reg, regReason: a && a.reg ? a.reg.reason || '' : ''};
+    const wol = !!(a && a.inAt && fullLeaveOn(uid, k)); // worked on a day of approved leave
+    const g = a && a.inAt ? geoOf(uid, k) : null;
+    return {k, status, mode, inT, outT, hrs, cls, ex, ot, reg, regReason: a && a.reg ? a.reg.reason || '' : '', wol, gIn: g && g.in, gOut: g && g.out, am: a && a.mode};
   });
   return {rows, loading};
 }
@@ -1507,9 +1588,9 @@ function renderTimesheet() {
     return `<button class="btn small ${need ? '' : 'ghost'}" type="button" data-act="${open ? 'reg-close' : 'reg-open'}" data-uid="${esc(uid)}" data-date="${r.k}" ${canAct() ? '' : 'disabled'}>${open ? 'Close' : r.reg === 'Regularization pending' ? 'Edit request' : need ? 'Regularize' : 'Fix times'}</button>`;
   };
   const fe = document.activeElement, fid = fe && fe.dataset && fe.dataset.regf ? fe.id : null;
-  setHTML($('#ts-table'), `<table><thead><tr><th>Date</th><th>Status</th><th>Where</th><th class="num">In</th><th class="num">Out</th><th class="num">Hours</th><th class="num">Extra</th><th>Overtime work</th><th></th></tr></thead><tbody>
-    ${rows.slice().reverse().map(r => `<tr class="${r.cls}"><td>${esc(fmtDay(r.k))}</td><td style="white-space:nowrap">${r.status === 'Present' ? '<span class="chip office nodot">Present</span>' : /leave/.test(r.status) ? `<span class="chip leave nodot">${esc(r.status)}</span>` : r.status === 'No record' ? `<span class="chip danger nodot">No record</span>` : esc(r.status)}${regChip(r)}</td>
-    <td>${esc(r.mode)}</td><td class="num">${esc(r.inT)}</td><td class="num">${r.outT === 'missing' ? '<span style="color:var(--danger)">missing</span>' : esc(r.outT)}</td><td class="num hrs">${r.hrs != null ? esc(fmtDur(r.hrs * 3600000)) : ''}</td><td class="num">${r.ex >= 0.25 ? `<b>+${esc(fmtDur(r.ex * 3600000))}</b>` : ''}</td><td>${esc(r.ot)}</td><td style="text-align:right">${regBtn(r)}</td></tr>${f && f.uid === uid && f.k === r.k ? regFormHTML() : ''}`).join('')}
+  setHTML($('#ts-table'), `<table><thead><tr><th>Date</th><th>Status</th><th>Where</th><th>Location</th><th class="num">In</th><th class="num">Out</th><th class="num">Hours</th><th class="num">Extra</th><th>Overtime work</th><th></th></tr></thead><tbody>
+    ${rows.slice().reverse().map(r => `<tr class="${r.cls}"><td>${esc(fmtDay(r.k))}</td><td style="white-space:nowrap">${r.status === 'Present' ? '<span class="chip office nodot">Present</span>' : /leave/.test(r.status) ? `<span class="chip leave nodot">${esc(r.status)}</span>` : r.status === 'No record' ? `<span class="chip danger nodot">No record</span>` : esc(r.status)}${r.wol ? ' <span class="chip leave nodot" title="Had approved leave this day but worked, so the leave was cancelled for this day">Worked on leave</span>' : ''}${regChip(r)}</td>
+    <td>${esc(r.mode)}</td><td>${r.gIn || r.gOut ? `<div class="geo-cell">${geoChip(r.gIn, r.am, 'In: ')}${geoChip(r.gOut, r.am, 'Out: ')}</div>` : ''}</td><td class="num">${esc(r.inT)}</td><td class="num">${r.outT === 'missing' ? '<span style="color:var(--danger)">missing</span>' : esc(r.outT)}</td><td class="num hrs">${r.hrs != null ? esc(fmtDur(r.hrs * 3600000)) : ''}</td><td class="num">${r.ex >= 0.25 ? `<b>+${esc(fmtDur(r.ex * 3600000))}</b>` : ''}</td><td>${esc(r.ot)}</td><td style="text-align:right">${regBtn(r)}</td></tr>${f && f.uid === uid && f.k === r.k ? regFormHTML() : ''}`).join('')}
     </tbody></table>`);
   if (fid && document.activeElement !== $('#' + fid)) $('#' + fid)?.focus({preventScroll: true});
 }
@@ -1540,7 +1621,7 @@ function renderTeam() {
   setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Role</th><th>Display name</th>' : ''}<th>Today</th><th>Birthday</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken / allowed + carried ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
     ${ppl.map(id => {
       const s = todayStatus(id), lu = leaveUsed(id, year);
-      const wfh = [...(S.att.get(id)?.values() || [])].filter(a => a.date && a.date.startsWith(m) && a.mode === 'wfh').length;
+      const wfh = [...(S.att.get(id)?.values() || [])].filter(a => a.date && a.date.startsWith(m) && a.inAt && a.mode === 'wfh' && !fullLeaveOn(id, a.date)).length;
       const open = tasks.filter(x => x.uid === id && x.status !== 'done');
       const over = open.filter(x => x.due && x.due < todayKey()).length;
       return `<tr><td>${who(id)}</td>${S.admin ? `<td>${roleCell(id)}</td><td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? bdInput(id) : fmtBd(id)}</td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num" style="white-space:nowrap">${lu.used} / ${allowInput(id)} + ${carryInput(id)}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
@@ -1577,10 +1658,11 @@ function renderStats() {
     const hours = closed.reduce((s, a) => s + (a.outAt - a.inAt) / 3600000, 0);
     const inMins = att.map(a => { const d = new Date(a.inAt); return d.getHours() * 60 + d.getMinutes(); });
     let leave = 0;
-    for (const r of allReqs()) if (r.uid === id && r.type === 'leave' && r.status === 'approved') eachWorkDay(r.from < from ? from : r.from, r.to > to ? to : r.to, () => { leave += r.half ? 0.5 : 1; }, id);
+    for (const r of allReqs()) if (r.uid === id && r.type === 'leave' && r.status === 'approved') { const w = workedSet(r); eachWorkDay(r.from < from ? from : r.from, r.to > to ? to : r.to, k => { if (!w.has(k)) leave += r.half ? 0.5 : 1; }, id); }
+    const wol = att.filter(a => fullLeaveOn(id, a.date)).length;
     return {id, done: done.length, rate: withDue.length ? onTime / withDue.length : null, withDue: withDue.length, open: open.length, overdue,
       avgDays: spans.length ? spans.reduce((a, b) => a + b, 0) / spans.length : null,
-      days: att.length, wfh: att.filter(a => a.mode === 'wfh').length, hours, closedN: closed.length, avgH: closed.length ? hours / closed.length : null,
+      days: att.length, wfh: att.filter(a => a.mode === 'wfh' && !fullLeaveOn(id, a.date)).length, wol, hours, closedN: closed.length, avgH: closed.length ? hours / closed.length : null,
       avgIn: inMins.length ? inMins.reduce((a, b) => a + b, 0) / inMins.length : null, missing: att.filter(a => !a.outAt && a.date < t).length, leave,
       extra: closed.reduce((s, a) => s + extraMs(id, a), 0) / 3600000, office: officeStats(id, from, to).pct};
   });
@@ -1596,7 +1678,7 @@ function renderStats() {
   const hm = m => `${pad(Math.floor(m / 60))}:${pad(Math.round(m % 60))}`;
   rows.sort((a, b) => b.done - a.done || nm(a.id).localeCompare(nm(b.id)));
   setHTML($('#stats-table'), rows.length ? `<table><thead><tr><th>Person</th><th class="num">Tasks done</th><th class="num">On time</th><th class="num">Avg days to finish</th><th class="num">Open</th><th class="num">Overdue</th>
-    <th class="num">Days worked</th><th class="num">WFH</th><th class="num">Leave</th><th class="num">Hours</th><th class="num">Avg / day</th><th class="num">Extra hrs</th><th class="num">Office %</th><th class="num">Avg check-in</th><th class="num">Missed check-outs</th></tr></thead><tbody>
+    <th class="num">Days worked</th><th class="num">WFH</th><th class="num">Leave</th><th class="num">Hours</th><th class="num">Avg / day</th><th class="num">Extra hrs</th><th class="num">Office %</th><th class="num">Avg check-in</th><th class="num">Missed check-outs</th><th class="num" title="Days with approved leave that they worked anyway (the leave was cancelled for those days)">Worked on leave</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${who(r.id)}</td>
       <td class="num"><span class="bar"><i style="width:${Math.round(r.done / maxDone * 60)}px"></i>${r.done}</span></td>
       <td class="num">${r.rate == null ? '<span class="faint">—</span>' : `<span class="rate ${rateCls(r.rate)}">${Math.round(r.rate * 100)}%</span>`}</td>
@@ -1608,7 +1690,8 @@ function renderStats() {
       <td class="num">${r.extra >= 0.25 ? fmtDur(r.extra * 3600000) : '<span class="faint">—</span>'}</td>
       <td class="num">${pctHTML(r.office)}</td>
       <td class="num">${r.avgIn == null ? '<span class="faint">—</span>' : hm(r.avgIn)}</td>
-      <td class="num" ${r.missing ? 'style="color:var(--danger)"' : ''}>${r.missing}</td></tr>`).join('')}
+      <td class="num" ${r.missing ? 'style="color:var(--danger)"' : ''}>${r.missing}</td>
+      <td class="num" ${r.wol ? 'style="color:var(--leave)"' : ''}>${r.wol}</td></tr>`).join('')}
     </tbody></table>` : '<div class="empty">No one on the team yet.</div>');
 }
 const CYC = ['Jan–Feb', 'Mar–Apr', 'May–Jun', 'Jul–Aug', 'Sep–Oct', 'Nov–Dec'];
@@ -1695,6 +1778,8 @@ function subUser(uid) {
   const un = [];
   un.push(base.collection('attendance').where('date', '>=', windowStart()).onSnapshot(s => { S.att.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
   un.push(base.collection('tasks').onSnapshot(s => { S.tasks.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
+  // Check-in locations: only managers and the person themselves can read them.
+  if (S.admin || uid === S.me) un.push(base.collection('geo').where('date', '>=', windowStart()).onSnapshot(s => { S.geo.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, () => {}));
   // Everyone reads the team's leave/WFH so the shared calendar can show who is away.
   {
     un.push(S.db.collection(`leave/${uid}/requests`).onSnapshot(s => { S.reqs.set(uid, new Map(s.docs.map(d => [d.id, d.data()]))); renderAll(); }, onErr));
@@ -1704,7 +1789,7 @@ function subUser(uid) {
 }
 function unsubUser(uid) {
   (S.subs.get(uid) || []).forEach(u => { try { u(); } catch (e) {} });
-  S.subs.delete(uid); S.att.delete(uid); S.reqs.delete(uid); S.tasks.delete(uid); S.appr.delete(uid);
+  S.subs.delete(uid); S.att.delete(uid); S.reqs.delete(uid); S.tasks.delete(uid); S.appr.delete(uid); S.geo.delete(uid);
 }
 /* Adds the teammate emails the manager listed (kept in a manager-only record) to the board, once per visit. */
 const lc = e => String(e || '').trim().toLowerCase();
@@ -1840,6 +1925,10 @@ function subscribeCore() {
     if (document.activeElement !== $('#st-max')) $('#st-max').value = maxAway();
     if (document.activeElement !== $('#st-anchor')) $('#st-anchor').value = S.settings.satAnchor || '2026-11-21';
     if (document.activeElement !== $('#st-anchor-group')) $('#st-anchor-group').value = String(Number(S.settings.satAnchorGroup) || 1);
+    const ol = officeLoc();
+    if (document.activeElement !== $('#st-olat')) $('#st-olat').value = ol ? ol.lat : '';
+    if (document.activeElement !== $('#st-olng')) $('#st-olng').value = ol ? ol.lng : '';
+    if (document.activeElement !== $('#st-orad')) $('#st-orad').value = ol ? ol.r : '';
     renderAll();
   }, onErr);
   S.db.collection('events').onSnapshot(s => { S.events = new Map(s.docs.map(d => [d.id, d.data()])); renderAll(); }, onErr);
@@ -1856,17 +1945,29 @@ document.addEventListener('click', e => {
   if (act === 'mode') { S.mode = b.dataset.mode; renderAll(); return; }
   if (!canAct()) return;
   if (act === 'checkin') {
+    const lv = fullLeaveOn(S.me, t);
+    if (lv && b.dataset.armed !== '1') {
+      b.dataset.armed = '1'; b.classList.add('armed'); const old = b.textContent; b.textContent = 'Click again to confirm';
+      setTimeout(() => { if (b.isConnected) { b.dataset.armed = ''; b.classList.remove('armed'); b.textContent = old; } }, 3500);
+      return;
+    }
     const home = (S.mode || 'office') === 'wfh';
-    const n = home ? [...wfhDays(S.me, t, null)].filter(k => k !== t).length + 1 : 0;
-    guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).set({date: t, inAt: Date.now(), outAt: null, mode: S.mode || 'office'}),
-      n > 1 ? `Checked in. This is your ${ordinal(n)} WFH day this week (team rule: 1).` : 'Checked in');
+    const n = home && !lv ? [...wfhDays(S.me, t, null)].filter(k => k !== t).length + 1 : 0;
+    const mode = S.mode || 'office';
+    guard(async () => {
+      await S.db.doc(`people/${S.me}/attendance/${t}`).set({date: t, inAt: Date.now(), outAt: null, mode});
+      if (lv) await markWorked(S.me, lv, t);
+    }, lv ? "Checked in. Today's leave is cancelled and the day is back in your balance."
+      : n > 1 ? `Checked in. This is your ${ordinal(n)} WFH day this week (team rule: 1).` : 'Checked in')
+      .then(ok => { if (ok) captureLocation(t, 'in', mode); });
   }
   else if (act === 'ot-save') {
     const v = ($('#ot-task')?.value || '').trim().slice(0, 200);
     if (!v) { toast('Write what you worked on.', true); return; }
     guard(() => S.db.doc(`people/${S.me}/attendance/${b.dataset.date}`).update({otTask: v}), 'Overtime work saved');
   }
-  else if (act === 'checkout') guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: Date.now()}), 'Checked out. See you tomorrow.');
+  else if (act === 'checkout') guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: Date.now()}), 'Checked out. See you tomorrow.')
+    .then(ok => { if (ok) captureLocation(t, 'out', S.att.get(S.me)?.get(t)?.mode || 'office'); });
   else if (act === 'undo-out') guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: null}), 'Check-out undone');
   else if (act === 'fix-out') {
     const date = b.dataset.date, v = $('#fix-' + date).value;
@@ -1901,7 +2002,9 @@ document.addEventListener('click', e => {
     const upd = status === 'approved'
       ? {inAt: g.inAt, outAt: g.outAt ?? a.outAt ?? null, mode: g.mode === 'wfh' ? 'wfh' : 'office', regularized: true, 'reg.status': 'approved', 'reg.decidedBy': S.me, 'reg.decidedAt': now}
       : {'reg.status': 'rejected', 'reg.decidedBy': S.me, 'reg.decidedAt': now};
-    guard(() => S.db.doc(`people/${uid}/attendance/${k}`).update(upd).then(() => S.tsCache.delete(uid + '|' + k.slice(0, 7))),
+    guard(() => S.db.doc(`people/${uid}/attendance/${k}`).update(upd)
+      .then(() => status === 'approved' ? markWorked(uid, fullLeaveOn(uid, k), k) : null)
+      .then(() => S.tsCache.delete(uid + '|' + k.slice(0, 7))),
       status === 'approved' ? `${fmtShort(k)} regularized for ${first(uid)}` : 'Regularization declined');
   }
   else if (act === 'task-status') guard(() => tdoc(uid, id).update({status, updatedAt: Date.now(), doneAt: status === 'done' ? Date.now() : null}), status === 'done' ? 'Marked done' : 'Task updated');
@@ -2007,7 +2110,23 @@ $('#settings-form').addEventListener('submit', e => {
   const anchor = $('#st-anchor').value || S.settings.satAnchor || '2026-11-21';
   if (pkey(anchor).getDay() !== 6) { toast('Pick a Saturday for the rota start.', true); return; }
   const anchorGroup = Number($('#st-anchor-group').value) || 1;
-  guard(() => S.db.doc('settings/team').set({...S.settings, allowance, carryMax: carry, hours, maxAway: max, satAnchor: anchor, satAnchorGroup: anchorGroup}), 'Settings saved');
+  const olat = $('#st-olat').value.trim(), olng = $('#st-olng').value.trim();
+  let office = null;
+  if (olat || olng) {
+    const la = Number(olat), lo = Number(olng);
+    if (!olat || !olng || !isFinite(la) || !isFinite(lo) || Math.abs(la) > 90 || Math.abs(lo) > 180) { toast('Enter both office latitude and longitude, or leave both empty.', true); return; }
+    office = {lat: la, lng: lo, radius: Math.max(50, Math.min(5000, Math.round(Number($('#st-orad').value) || 300)))};
+  }
+  guard(() => S.db.doc('settings/team').set({...S.settings, allowance, carryMax: carry, hours, maxAway: max, satAnchor: anchor, satAnchorGroup: anchorGroup, office}), 'Settings saved');
+});
+$('#st-ohere').addEventListener('click', async () => {
+  const b = $('#st-ohere'), old = b.textContent; b.disabled = true; b.textContent = 'Finding you…';
+  const g = await getLocation();
+  b.disabled = false; b.textContent = old;
+  if (g.err) { toast(g.err === 'denied' ? 'Allow location for this site in your browser, then try again.' : "Couldn't get your location. Try again.", true); return; }
+  $('#st-olat').value = g.lat; $('#st-olng').value = g.lng;
+  if (!$('#st-orad').value) $('#st-orad').value = 300;
+  toast(`Office set to where you are now (accurate to about ${fmtDist(g.acc)}). Press Save settings to keep it.`);
 });
 document.addEventListener('change', e => {
   const al = e.target.closest && e.target.closest('[data-allowfor]');
@@ -2094,7 +2213,7 @@ $('#ts-csv').addEventListener('click', async () => {
   const {rows, loading} = timesheetRows(S.ts.person, S.ts.month);
   if (loading) return;
   const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = ['Date,Status,Where,Check in,Check out,Hours,Extra hours,Overtime work,Regularization,Regularization reason'].concat(rows.map(r => [r.k, r.status, r.mode, r.inT, r.outT, r.hrs != null ? r.hrs.toFixed(2) : '', r.ex ? r.ex.toFixed(2) : '', r.ot, r.reg, r.reg ? r.regReason : ''].map(q).join(','))).join('\n');
+  const csv = ['Date,Status,Where,Check in,Check out,Hours,Extra hours,Overtime work,Regularization,Regularization reason,Check-in location,Check-out location'].concat(rows.map(r => [r.k, r.status + (r.wol ? ' (worked on leave)' : ''), r.mode, r.inT, r.outT, r.hrs != null ? r.hrs.toFixed(2) : '', r.ex ? r.ex.toFixed(2) : '', r.ot, r.reg, r.reg ? r.regReason : '', geoText(r.gIn, r.am), geoText(r.gOut, r.am)].map(q).join(','))).join('\n');
   const name = nm(S.ts.person).replace(/[^\w-]+/g, '-').replace(/^-|-$/g, '') || 'person';
   try { await S.dl.save({filename: `timesheet-${name}-${S.ts.month}.csv`, data: csv}); }
   catch (e) { if (e && e.code !== 'declined') toast("Couldn't prepare the download here.", true); }
