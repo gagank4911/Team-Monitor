@@ -169,7 +169,8 @@ form .fs{display:flex;flex-direction:column;gap:12px}
 .trow .times{font-size:12.5px;color:var(--muted);text-align:right}
 a.chip.geo{text-decoration:none}
 a.chip.geo:hover{text-decoration:underline}
-.trow .times .geo{margin-top:3px}
+.geo-row{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;margin-top:4px}
+@media (max-width:760px){.geo-row{justify-content:flex-start}}
 .geo-cell{display:flex;flex-direction:column;gap:3px;align-items:flex-start}
 .tl{position:relative;height:10px;background:var(--sunk);border-radius:5px}
 .tl .span{position:absolute;top:0;bottom:0;border-radius:5px;background:var(--office);min-width:4px}
@@ -571,7 +572,7 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
       </div>
       <div class="sumrow" id="stats-sum"></div>
       <div class="table-wrap" id="stats-table"><div class="empty">Loading…</div></div>
-      <p class="muted" style="margin:12px 0 0">On time = finished on or before the due date (tasks with no due date are left out). Hours count only days with both a check-in and a check-out. Office % = office days ÷ working days so far, not counting approved leave (target 67%). Extra hours = time past the expected hours on a working day, or any time worked on a day off. Only managers see this tab.</p>
+      <p class="muted" style="margin:12px 0 0">On time = finished on or before the due date (tasks with no due date are left out). Hours count only days with both a check-in and a check-out, and leave out breaks (time between checking out and checking in again). Office % = office days ÷ working days so far, not counting approved leave (target 67%). Extra hours = time past the expected hours on a working day, or any time worked on a day off. Only managers see this tab.</p>
     </div>
   </section>
 
@@ -1072,9 +1073,34 @@ function officeStats(uid, from, to) {
   return {base, office, pct: base ? office / base : null};
 }
 const pctHTML = p => p == null ? '<span class="faint">—</span>' : `<span class="rate ${p >= TARGET ? 'good' : 'low'}">${Math.round(p * 100)}%</span>`;
+/* ---- work sessions: a day can have breaks (check out, check in again) ----
+   The day's record keeps inAt = first check-in and outAt = last check-out (null while working), plus
+   sessions: [{in, out}]. Older records have no sessions: they are one session from inAt to outAt. */
+function sessionsOf(a) {
+  if (!a || !a.inAt) return [];
+  if (Array.isArray(a.sessions) && a.sessions.length) return a.sessions;
+  return [{in: a.inAt, out: a.outAt || null}];
+}
+/* Time actually worked (breaks left out). An open session counts up to `now` when given, otherwise not at all. */
+const workedMs = (a, now) => sessionsOf(a).reduce((s, x) => s + Math.max(0, (x.out || now || x.in) - x.in), 0);
+/* Total break time between sessions. */
+function breakMs(a) {
+  const ss = sessionsOf(a); let b = 0;
+  for (let i = 1; i < ss.length; i++) if (ss[i - 1].out) b += Math.max(0, ss[i].in - ss[i - 1].out);
+  return b;
+}
+const sessText = a => sessionsOf(a).map(x => `${fmtTime(x.in)}–${x.out ? fmtTime(x.out) : 'now'}`).join(', ');
+/* New sessions for a regularized day: keep the breaks when the new times still fit around them, else one session. */
+function regSessions(a, inAt, outAt) {
+  const ss = sessionsOf(a).map(x => ({...x}));
+  if (ss.length > 1 && inAt < (ss[0].out || Infinity) && (!outAt || outAt > ss[ss.length - 1].in)) {
+    ss[0].in = inAt; ss[ss.length - 1].out = outAt || null; return ss;
+  }
+  return [{in: inAt, out: outAt || null}];
+}
 function extraMs(uid, a) {
   if (!a || !a.inAt || !a.outAt) return 0;
-  const w = a.outAt - a.inAt;
+  const w = workedMs(a);
   if (!isWorkDay(uid, pkey(a.date))) return w;
   return Math.max(0, w - (Number(S.settings.hours) || 8) * 3600000);
 }
@@ -1095,8 +1121,9 @@ async function captureLocation(k, which, mode) {
   const g = {...await getLocation(), at: Date.now()};
   try { await S.db.doc(`people/${S.me}/geo/${k}`).set({date: k, [which]: g}, {merge: true}); } catch (e) { return; }
   const gi = geoInfo(g, mode);
-  if (g.err === 'denied') toast('Location not shared. Allow location for this site so your manager can see where you checked ' + which + ' from.', true);
-  else if (gi && gi.flag) toast(`You checked ${which} as Office but you're ${gi.label}.`, true);
+  const w = which.startsWith('in') ? 'in' : 'out';
+  if (g.err === 'denied') toast('Location not shared. Allow location for this site so your manager can see where you checked ' + w + ' from.', true);
+  else if (gi && gi.flag) toast(`You checked ${w} as Office but you're ${gi.label}.`, true);
 }
 const officeLoc = () => { const o = S.settings.office; return o && typeof o.lat === 'number' && typeof o.lng === 'number' && isFinite(o.lat) && isFinite(o.lng) ? {lat: o.lat, lng: o.lng, r: Math.max(50, Number(o.radius) || 300)} : null; };
 function distM(a, b) {
@@ -1186,7 +1213,7 @@ async function submitReg(pid, k, f) {
   const ref = S.db.doc(`people/${pid}/attendance/${k}`), now = Date.now();
   const reg = {inAt, outAt, mode, reason, at: now, by: S.me};
   const done = () => S.tsCache.delete(pid + '|' + k.slice(0, 7));
-  if (S.admin) return guard(() => ref.set({date: k, inAt, outAt, mode, regularized: true, reg: {...reg, status: 'approved', decidedBy: S.me, decidedAt: now}}, {merge: true}).then(() => markWorked(pid, fullLeaveOn(pid, k), k)).then(done),
+  if (S.admin) return guard(() => ref.set({date: k, inAt, outAt, mode, sessions: regSessions(S.att.get(pid)?.get(k), inAt, outAt), regularized: true, reg: {...reg, status: 'approved', decidedBy: S.me, decidedAt: now}}, {merge: true}).then(() => markWorked(pid, fullLeaveOn(pid, k), k)).then(done),
     `${fmtShort(k)} regularized${pid !== S.me ? ' for ' + first(pid) : ''}`);
   return guard(() => ref.set({date: k, reg: {...reg, status: 'pending', decidedBy: null, decidedAt: null}}, {merge: true}).then(done),
     'Sent to your manager for approval');
@@ -1215,7 +1242,7 @@ function fillRegTab(force) {
 function regFormHTML() {
   const f = S.regForm, today = f.k === todayKey();
   const direct = S.admin;
-  return `<tr class="regrow"><td colspan="10"><div class="note">
+  return `<tr class="regrow"><td colspan="11"><div class="note">
     <b>${direct ? 'Regularize' : 'Ask to regularize'} ${esc(fmtDay(f.k))}</b>${f.uid !== S.me ? ` for ${esc(first(f.uid))}` : ''}
     <div class="fixrow">
       <label class="muted" for="reg-in">In</label><input type="time" id="reg-in" data-regf="in" value="${esc(f.in)}">
@@ -1278,16 +1305,20 @@ function renderToday() {
       <div class="punch-actions">${seg}<button class="btn primary big" type="button" data-act="checkin" ${canAct() ? '' : 'disabled'}>${lv && !lv.half ? 'Check in and cancel today\'s leave' : 'Check in'}</button></div>
       <div class="faint" style="font-size:12px">Your location is recorded once when you check in and once when you check out. Only managers can see it.</div>`;
   } else if (!a.outAt) {
+    const ss = sessionsOf(a), cur = ss[ss.length - 1], br = breakMs(a);
     html = `<div class="hello">${hello}</div>
-      <div><div class="clock">${esc(fmtDur(now - a.inAt))}<small>so far</small></div>
-      <div class="muted">Checked in at <span class="mono">${esc(fmtTime(a.inAt))}</span> · <span class="chip ${a.mode === 'wfh' ? 'wfh' : 'office'}">${a.mode === 'wfh' ? 'Home' : 'Office'}</span> ${geoChip(geoOf(S.me, t)?.in, a.mode)}</div></div>
-      <div class="punch-actions"><button class="btn primary big" type="button" data-act="checkout" ${canAct() ? '' : 'disabled'}>Check out</button></div>`;
+      <div><div class="clock">${esc(fmtDur(workedMs(a, now)))}<small>worked so far</small></div>
+      <div class="muted">${ss.length > 1 ? `Back since <span class="mono">${esc(fmtTime(cur.in))}</span> · ${ordinal(ss.length)} session · ${esc(fmtDur(br))} break` : `Checked in at <span class="mono">${esc(fmtTime(a.inAt))}</span>`} · <span class="chip ${a.mode === 'wfh' ? 'wfh' : 'office'}">${a.mode === 'wfh' ? 'Home' : 'Office'}</span> ${geoChip(geoOf(S.me, t)?.in, a.mode, 'In: ')}</div>
+      ${ss.length > 1 ? `<div class="faint mono" style="font-size:12px;margin-top:4px">${esc(sessText(a))}</div>` : ''}</div>
+      <div class="punch-actions"><button class="btn primary big" type="button" data-act="checkout" ${canAct() ? '' : 'disabled'}>Check out</button><span class="muted" style="font-size:12.5px">Going on a break? Check out now and check in again when you're back.</span></div>`;
   } else {
-    const short = (a.outAt - a.inAt) / 3600000 < S.settings.hours;
+    const w = workedMs(a), br = breakMs(a), ss = sessionsOf(a);
+    const short = w / 3600000 < S.settings.hours;
     html = `<div class="hello">${hello}</div>
-      <div><div class="clock">${esc(fmtDur(a.outAt - a.inAt))}<small>worked today</small></div>
-      <div class="muted"><span class="mono">${esc(fmtTime(a.inAt))} → ${esc(fmtTime(a.outAt))}</span> · <span class="chip ${a.mode === 'wfh' ? 'wfh' : 'office'}">${a.mode === 'wfh' ? 'Home' : 'Office'}</span>${short ? ` · <span style="color:var(--leave)">under ${S.settings.hours}h</span>` : ''}</div></div>
-      <div class="punch-actions"><span class="chip">Checked out</span><button class="btn small ghost" type="button" data-act="undo-out" ${canAct() ? '' : 'disabled'}>Undo check-out</button></div>`;
+      <div><div class="clock">${esc(fmtDur(w))}<small>worked today</small></div>
+      <div class="muted"><span class="mono">${esc(ss.length > 1 ? sessText(a) : `${fmtTime(a.inAt)} → ${fmtTime(a.outAt)}`)}</span>${br ? ` · ${esc(fmtDur(br))} break` : ''} · <span class="chip ${a.mode === 'wfh' ? 'wfh' : 'office'}">${a.mode === 'wfh' ? 'Home' : 'Office'}</span> ${geoChip(geoOf(S.me, t)?.in, a.mode, 'In: ')} ${geoChip(geoOf(S.me, t)?.out, a.mode, 'Out: ')}${short ? ` · <span style="color:var(--leave)">under ${S.settings.hours}h</span>` : ''}</div></div>
+      <div class="punch-actions"><span class="chip">Checked out at ${esc(fmtTime(a.outAt))}</span><button class="btn primary" type="button" data-act="checkin-again" ${canAct() ? '' : 'disabled'}>Check in again</button><button class="btn small ghost" type="button" data-act="undo-out" ${canAct() ? '' : 'disabled'}>Undo check-out</button></div>
+      <div class="faint" style="font-size:12px">Back from a break? Check in again: the break isn't counted as work time.</div>`;
   }
   if (a && a.outAt) {
     const ex = extraMs(S.me, a);
@@ -1299,7 +1330,7 @@ function renderToday() {
   setHTML($('#punch'), html);
   // missed check-outs
   const missed = [...(S.att.get(S.me)?.values() || [])].filter(x => x.inAt && !x.outAt && x.date < t).sort((x, y) => y.date.localeCompare(x.date)).slice(0, 3);
-  setHTML($('#punch-fix'), missed.map(x => `<div class="note warn" style="margin-top:14px">You didn't check out on <b>${esc(fmtDay(x.date))}</b> (checked in ${esc(fmtTime(x.inAt))}).
+  setHTML($('#punch-fix'), missed.map(x => `<div class="note warn" style="margin-top:14px">You didn't check out on <b>${esc(fmtDay(x.date))}</b> (last checked in ${esc(fmtTime(sessionsOf(x).slice(-1)[0].in))}).
     <div class="fixrow"><label class="muted" for="fix-${x.date}">Left at</label><input type="time" id="fix-${x.date}" value="18:00"><button class="btn small" type="button" data-act="fix-out" data-date="${x.date}" ${canAct() ? '' : 'disabled'}>Save check-out</button></div></div>`).join('')
     + (() => {
       // forgot to check in at all: offer to regularize
@@ -1336,9 +1367,11 @@ function renderToday() {
   const ticks = [9, 12, 15, 18].map(h => `<span style="left:${(h * 60 - S0) / (S1 - S0) * 100}%">${pad(h)}:00</span>`).join('');
   setHTML($('#team-today'), ppl.length ? `<div class="trow head"><span>Person</span><span>Status</span><div class="ticks">${ticks}</div><span style="text-align:right">Hours</span></div>` + st.map(x => {
     const a = x.a;
-    const bar = a && a.inAt ? `<div class="span ${a.mode === 'wfh' ? 'wfh' : ''} ${a.outAt ? '' : 'open'}" style="left:${pos(a.inAt)}%;width:${Math.max(0.6, pos(a.outAt || now) - pos(a.inAt))}%"></div>` : '';
-    const gl = a && a.inAt && (S.admin || x.id === S.me) ? geoChip(geoOf(x.id, t)?.in, a.mode) : '';
-    const times = a && a.inAt ? `<span class="mono">${esc(fmtTime(a.inAt))} – ${a.outAt ? esc(fmtTime(a.outAt)) : 'now'} · ${esc(fmtDur((a.outAt || now) - a.inAt))}</span>${gl ? ' ' + gl : ''}` : '<span class="faint">—</span>';
+    const bar = sessionsOf(a).map(s => `<div class="span ${a.mode === 'wfh' ? 'wfh' : ''} ${s.out ? '' : 'open'}" style="left:${pos(s.in)}%;width:${Math.max(0.6, pos(s.out || now) - pos(s.in))}%" title="${esc(fmtTime(s.in))}–${s.out ? esc(fmtTime(s.out)) : 'now'}"></div>`).join('');
+    const br = a && a.inAt ? breakMs(a) : 0;
+    const gx = a && a.inAt && (S.admin || x.id === S.me) ? geoOf(x.id, t) : null;
+    const gl = gx ? geoChip(gx.in, a.mode, 'In: ') + (a.outAt ? geoChip(gx.out, a.mode, 'Out: ') : '') : '';
+    const times = a && a.inAt ? `<span class="mono" title="${esc(sessText(a))}">${esc(fmtTime(a.inAt))} – ${a.outAt ? esc(fmtTime(a.outAt)) : 'now'} · ${esc(fmtDur(workedMs(a, now)))}</span>${br ? `<div class="faint" style="font-size:11.5px">${esc(fmtDur(br))} break · ${sessionsOf(a).length} sessions</div>` : ''}${gl ? `<div class="geo-row">${gl}</div>` : ''}` : '<span class="faint">—</span>';
     return `<div class="trow">${who(x.id)}<span><span class="chip ${chipClass(x.k)}">${esc(x.label)}</span></span><div class="tl">${bar}<div class="now" style="left:${nowPos}%" title="Now"></div></div><div class="times">${times}</div></div>`;
   }).join('') : `<div class="empty">No one has joined yet. Teammates appear here the first time they open this page.</div>`);
 }
@@ -1547,7 +1580,7 @@ function timesheetRows(uid, m) {
     if (a && a.inAt) {
       status = 'Present'; mode = a.mode === 'wfh' ? 'Home' : 'Office';
       inT = fmtTime(a.inAt); outT = a.outAt ? fmtTime(a.outAt) : (k === t ? 'still in' : 'missing');
-      if (a.outAt) { hrs = (a.outAt - a.inAt) / 3600000; if (hrs < S.settings.hours && isWorkDay(uid, d)) cls = 'short'; ex = extraMs(uid, {...a, date: k}) / 3600000; ot = a.otTask || ''; }
+      if (a.outAt) { hrs = workedMs(a) / 3600000; if (hrs < S.settings.hours && isWorkDay(uid, d)) cls = 'short'; ex = extraMs(uid, {...a, date: k}) / 3600000; ot = a.otTask || ''; }
     } else if (lv) { status = (CAT[lv.category] || '') + ' leave' + (lv.half ? ' (½)' : ''); }
     else if (!isWorkDay(uid, d)) { status = offLabel(d); cls = 'wk'; }
     else { status = k === t ? 'Not in yet' : 'No record'; }
@@ -1555,7 +1588,8 @@ function timesheetRows(uid, m) {
     const reg = rs === 'pending' ? 'Regularization pending' : rs === 'approved' && a.regularized ? 'Regularized' : rs === 'rejected' ? 'Regularization declined' : '';
     const wol = !!(a && a.inAt && fullLeaveOn(uid, k)); // worked on a day of approved leave
     const g = a && a.inAt ? geoOf(uid, k) : null;
-    return {k, status, mode, inT, outT, hrs, cls, ex, ot, reg, regReason: a && a.reg ? a.reg.reason || '' : '', wol, gIn: g && g.in, gOut: g && g.out, am: a && a.mode};
+    const nS = sessionsOf(a).length, brk = nS > 1 ? breakMs(a) / 3600000 : 0, sess = nS > 1 ? sessText(a) : '';
+    return {k, status, mode, inT, outT, hrs, cls, ex, ot, reg, regReason: a && a.reg ? a.reg.reason || '' : '', wol, gIn: g && g.in, gOut: g && g.out, am: a && a.mode, brk, sess};
   });
   return {rows, loading};
 }
@@ -1588,9 +1622,9 @@ function renderTimesheet() {
     return `<button class="btn small ${need ? '' : 'ghost'}" type="button" data-act="${open ? 'reg-close' : 'reg-open'}" data-uid="${esc(uid)}" data-date="${r.k}" ${canAct() ? '' : 'disabled'}>${open ? 'Close' : r.reg === 'Regularization pending' ? 'Edit request' : need ? 'Regularize' : 'Fix times'}</button>`;
   };
   const fe = document.activeElement, fid = fe && fe.dataset && fe.dataset.regf ? fe.id : null;
-  setHTML($('#ts-table'), `<table><thead><tr><th>Date</th><th>Status</th><th>Where</th><th>Location</th><th class="num">In</th><th class="num">Out</th><th class="num">Hours</th><th class="num">Extra</th><th>Overtime work</th><th></th></tr></thead><tbody>
+  setHTML($('#ts-table'), `<table><thead><tr><th>Date</th><th>Status</th><th>Where</th><th>Location</th><th class="num">In</th><th class="num">Out</th><th class="num">Break</th><th class="num" title="Time worked, breaks left out">Hours</th><th class="num">Extra</th><th>Overtime work</th><th></th></tr></thead><tbody>
     ${rows.slice().reverse().map(r => `<tr class="${r.cls}"><td>${esc(fmtDay(r.k))}</td><td style="white-space:nowrap">${r.status === 'Present' ? '<span class="chip office nodot">Present</span>' : /leave/.test(r.status) ? `<span class="chip leave nodot">${esc(r.status)}</span>` : r.status === 'No record' ? `<span class="chip danger nodot">No record</span>` : esc(r.status)}${r.wol ? ' <span class="chip leave nodot" title="Had approved leave this day but worked, so the leave was cancelled for this day">Worked on leave</span>' : ''}${regChip(r)}</td>
-    <td>${esc(r.mode)}</td><td>${r.gIn || r.gOut ? `<div class="geo-cell">${geoChip(r.gIn, r.am, 'In: ')}${geoChip(r.gOut, r.am, 'Out: ')}</div>` : ''}</td><td class="num">${esc(r.inT)}</td><td class="num">${r.outT === 'missing' ? '<span style="color:var(--danger)">missing</span>' : esc(r.outT)}</td><td class="num hrs">${r.hrs != null ? esc(fmtDur(r.hrs * 3600000)) : ''}</td><td class="num">${r.ex >= 0.25 ? `<b>+${esc(fmtDur(r.ex * 3600000))}</b>` : ''}</td><td>${esc(r.ot)}</td><td style="text-align:right">${regBtn(r)}</td></tr>${f && f.uid === uid && f.k === r.k ? regFormHTML() : ''}`).join('')}
+    <td>${esc(r.mode)}</td><td>${r.gIn || r.gOut ? `<div class="geo-cell">${geoChip(r.gIn, r.am, 'In: ')}${geoChip(r.gOut, r.am, 'Out: ')}</div>` : ''}</td><td class="num">${esc(r.inT)}</td><td class="num">${r.outT === 'missing' ? '<span style="color:var(--danger)">missing</span>' : esc(r.outT)}</td><td class="num" ${r.sess ? `title="Worked ${esc(r.sess)}"` : ''}>${r.brk ? esc(fmtDur(r.brk * 3600000)) : ''}${r.sess ? `<div class="faint mono" style="font-size:11px;white-space:nowrap">${esc(r.sess)}</div>` : ''}</td><td class="num hrs">${r.hrs != null ? esc(fmtDur(r.hrs * 3600000)) : ''}</td><td class="num">${r.ex >= 0.25 ? `<b>+${esc(fmtDur(r.ex * 3600000))}</b>` : ''}</td><td>${esc(r.ot)}</td><td style="text-align:right">${regBtn(r)}</td></tr>${f && f.uid === uid && f.k === r.k ? regFormHTML() : ''}`).join('')}
     </tbody></table>`);
   if (fid && document.activeElement !== $('#' + fid)) $('#' + fid)?.focus({preventScroll: true});
 }
@@ -1655,7 +1689,7 @@ function renderStats() {
     const spans = done.filter(x => x.createdAt).map(x => (x.doneAt - x.createdAt) / DAY);
     const att = [...(S.att.get(id)?.values() || [])].filter(a => a.inAt && a.date >= from && a.date <= to);
     const closed = att.filter(a => a.outAt);
-    const hours = closed.reduce((s, a) => s + (a.outAt - a.inAt) / 3600000, 0);
+    const hours = closed.reduce((s, a) => s + workedMs(a) / 3600000, 0);
     const inMins = att.map(a => { const d = new Date(a.inAt); return d.getHours() * 60 + d.getMinutes(); });
     let leave = 0;
     for (const r of allReqs()) if (r.uid === id && r.type === 'leave' && r.status === 'approved') { const w = workedSet(r); eachWorkDay(r.from < from ? from : r.from, r.to > to ? to : r.to, k => { if (!w.has(k)) leave += r.half ? 0.5 : 1; }, id); }
@@ -1955,7 +1989,8 @@ document.addEventListener('click', e => {
     const n = home && !lv ? [...wfhDays(S.me, t, null)].filter(k => k !== t).length + 1 : 0;
     const mode = S.mode || 'office';
     guard(async () => {
-      await S.db.doc(`people/${S.me}/attendance/${t}`).set({date: t, inAt: Date.now(), outAt: null, mode});
+      const at = Date.now();
+      await S.db.doc(`people/${S.me}/attendance/${t}`).set({date: t, inAt: at, outAt: null, mode, sessions: [{in: at, out: null}]});
       if (lv) await markWorked(S.me, lv, t);
     }, lv ? "Checked in. Today's leave is cancelled and the day is back in your balance."
       : n > 1 ? `Checked in. This is your ${ordinal(n)} WFH day this week (team rule: 1).` : 'Checked in')
@@ -1966,17 +2001,37 @@ document.addEventListener('click', e => {
     if (!v) { toast('Write what you worked on.', true); return; }
     guard(() => S.db.doc(`people/${S.me}/attendance/${b.dataset.date}`).update({otTask: v}), 'Overtime work saved');
   }
-  else if (act === 'checkout') guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: Date.now()}), 'Checked out. See you tomorrow.')
-    .then(ok => { if (ok) captureLocation(t, 'out', S.att.get(S.me)?.get(t)?.mode || 'office'); });
-  else if (act === 'undo-out') guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: null}), 'Check-out undone');
+  else if (act === 'checkout') {
+    const a = S.att.get(S.me)?.get(t); if (!a) return;
+    const at = Date.now(), ss = sessionsOf(a).map(x => ({...x}));
+    ss[ss.length - 1].out = at;
+    guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: at, sessions: ss}), 'Checked out. Going on a break? Check in again when you\'re back.')
+      .then(ok => { if (ok) captureLocation(t, 'out', a.mode || 'office'); });
+  }
+  else if (act === 'checkin-again') {
+    const a = S.att.get(S.me)?.get(t); if (!a || !a.outAt) return;
+    const at = Date.now(), ss = sessionsOf(a).map(x => ({...x}));
+    ss.push({in: at, out: null});
+    guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: null, sessions: ss}),
+      `Welcome back. ${fmtDur(at - a.outAt)} break, not counted as work time.`)
+      .then(ok => { if (ok) captureLocation(t, 'in' + ss.length, a.mode || 'office'); });
+  }
+  else if (act === 'undo-out') {
+    const a = S.att.get(S.me)?.get(t); if (!a) return;
+    const ss = sessionsOf(a).map(x => ({...x}));
+    ss[ss.length - 1].out = null;
+    guard(() => S.db.doc(`people/${S.me}/attendance/${t}`).update({outAt: null, sessions: ss}), 'Check-out undone');
+  }
   else if (act === 'fix-out') {
     const date = b.dataset.date, v = $('#fix-' + date).value;
     const a = S.att.get(S.me)?.get(date);
     if (!v || !a) return;
     const [h, mi] = v.split(':').map(Number);
     const d = pkey(date); d.setHours(h, mi, 0, 0);
-    if (d.getTime() <= a.inAt) { toast('Check-out has to be after your check-in time.', true); return; }
-    guard(() => S.db.doc(`people/${S.me}/attendance/${date}`).update({outAt: d.getTime(), corrected: true}), 'Check-out saved');
+    const ss = sessionsOf(a).map(x => ({...x})), last = ss[ss.length - 1];
+    if (d.getTime() <= last.in) { toast(`Check-out has to be after you last checked in (${fmtTime(last.in)}).`, true); return; }
+    last.out = d.getTime();
+    guard(() => S.db.doc(`people/${S.me}/attendance/${date}`).update({outAt: d.getTime(), sessions: ss, corrected: true}), 'Check-out saved');
   }
   else if (act === 'reg-open') {
     const k = b.dataset.date;
@@ -2000,7 +2055,7 @@ document.addEventListener('click', e => {
     if (!S.admin || !a || !a.reg) return;
     const now = Date.now(), g = a.reg;
     const upd = status === 'approved'
-      ? {inAt: g.inAt, outAt: g.outAt ?? a.outAt ?? null, mode: g.mode === 'wfh' ? 'wfh' : 'office', regularized: true, 'reg.status': 'approved', 'reg.decidedBy': S.me, 'reg.decidedAt': now}
+      ? {inAt: g.inAt, outAt: g.outAt ?? a.outAt ?? null, mode: g.mode === 'wfh' ? 'wfh' : 'office', sessions: regSessions(a, g.inAt, g.outAt ?? a.outAt ?? null), regularized: true, 'reg.status': 'approved', 'reg.decidedBy': S.me, 'reg.decidedAt': now}
       : {'reg.status': 'rejected', 'reg.decidedBy': S.me, 'reg.decidedAt': now};
     guard(() => S.db.doc(`people/${uid}/attendance/${k}`).update(upd)
       .then(() => status === 'approved' ? markWorked(uid, fullLeaveOn(uid, k), k) : null)
@@ -2213,7 +2268,7 @@ $('#ts-csv').addEventListener('click', async () => {
   const {rows, loading} = timesheetRows(S.ts.person, S.ts.month);
   if (loading) return;
   const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = ['Date,Status,Where,Check in,Check out,Hours,Extra hours,Overtime work,Regularization,Regularization reason,Check-in location,Check-out location'].concat(rows.map(r => [r.k, r.status + (r.wol ? ' (worked on leave)' : ''), r.mode, r.inT, r.outT, r.hrs != null ? r.hrs.toFixed(2) : '', r.ex ? r.ex.toFixed(2) : '', r.ot, r.reg, r.reg ? r.regReason : '', geoText(r.gIn, r.am), geoText(r.gOut, r.am)].map(q).join(','))).join('\n');
+  const csv = ['Date,Status,Where,Check in,Check out,Hours,Extra hours,Overtime work,Regularization,Regularization reason,Check-in location,Check-out location,Break hours,Work sessions'].concat(rows.map(r => [r.k, r.status + (r.wol ? ' (worked on leave)' : ''), r.mode, r.inT, r.outT, r.hrs != null ? r.hrs.toFixed(2) : '', r.ex ? r.ex.toFixed(2) : '', r.ot, r.reg, r.reg ? r.regReason : '', geoText(r.gIn, r.am), geoText(r.gOut, r.am), r.brk ? r.brk.toFixed(2) : '', r.sess].map(q).join(','))).join('\n');
   const name = nm(S.ts.person).replace(/[^\w-]+/g, '-').replace(/^-|-$/g, '') || 'person';
   try { await S.dl.save({filename: `timesheet-${name}-${S.ts.month}.csv`, data: csv}); }
   catch (e) { if (e && e.code !== 'declined') toast("Couldn't prepare the download here.", true); }
