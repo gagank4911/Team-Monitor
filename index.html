@@ -830,7 +830,9 @@ const who = (id, size) => `<span class="who">${avatar(id, size)}<span class="nm"
 function setHTML(el, html) { if (el && el._h !== html) { el.innerHTML = html; el._h = html; } }
 const ready = () => S.status === 'ready';
 const canAct = () => ready() && !S.ro;
-const people = () => [...S.roster.entries()].filter(([, d]) => !d.removed).map(([id]) => id)
+// The admin (an owner in config.js) runs the board but is not one of the employees on it
+const isOwnerId = id => TD.roleOf[id] === 'owner';
+const people = () => [...S.roster.entries()].filter(([id, d]) => !d.removed && !isOwnerId(id)).map(([id]) => id)
   .sort((a, b) => (a === S.me ? -1 : b === S.me ? 1 : nm(a).localeCompare(nm(b))));
 
 let toastT;
@@ -1310,7 +1312,7 @@ function renderTimesheet() {
   const psel = $('#ts-person');
   const opts = ppl.map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
   if (psel._h !== opts) { psel.innerHTML = opts; psel._h = opts; }
-  if (!ppl.includes(S.ts.person)) S.ts.person = S.me;
+  if (!ppl.includes(S.ts.person)) S.ts.person = ppl.includes(S.me) ? S.me : (ppl[0] || S.me);
   psel.value = S.ts.person;
   const mi = $('#ts-month'); if (mi.value !== S.ts.month) mi.value = S.ts.month; mi.max = mkey(new Date());
   $('#ts-csv').hidden = !S.dl;
@@ -1577,7 +1579,7 @@ async function maybeImport() {
   renderAll();
 }
 async function ensureRegistered() {
-  if (S.registering || S.roster.has(S.me) || S.ro) return;
+  if (S.registering || S.roster.has(S.me) || S.ro || isOwnerId(S.me)) return;
   S.registering = true;
   try { await S.db.doc('people/' + S.me).set({joined: Date.now(), name: (window.TD && window.TD.nameOf[S.me]) || ''}); }
   catch (e) { if (e && e.code === 'invalid_argument') { S.ro = true; renderAll(); } }
@@ -1590,6 +1592,7 @@ async function seedRoster() {
   if (!Object.keys(TD.nameOf).length) return; // team list didn't load; change nothing
   seeded = true;
   for (const [id, name] of Object.entries(TD.nameOf)) {
+    if (isOwnerId(id)) continue;
     const ex = S.roster.get(id), email = TD.emailOf[id] || '';
     if (ex) { if (ex.removed || ex.email !== email) try { await S.db.doc('people/' + id).set({removed: false, removedBy: '', email}, {merge: true}); } catch (e) {} continue; }
     try { await S.db.doc('people/' + id).set({joined: Date.now(), name, email, addedBy: S.me}); } catch (e) {}
@@ -1905,7 +1908,6 @@ async function boot() {
   if ((await user.can('data.write')) === false) S.ro = true;
   document.body.classList.toggle('is-admin', S.admin);
   if (!S.ts.person) S.ts.person = S.me;
-  S.ts.person = S.me;
   route();
   subscribeCore();
   renderAll();
