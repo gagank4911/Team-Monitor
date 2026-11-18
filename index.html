@@ -186,11 +186,11 @@ form .fs{display:flex;flex-direction:column;gap:12px}
 .item .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:none}
 
 /* balance */
-.bal{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.bal{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:8px}
 .bal div{background:var(--sunk);border-radius:8px;padding:8px 10px}
 .bal b{display:block;font-family:var(--font-mono);font-size:20px;font-variant-numeric:tabular-nums}
 .bal span{font-size:12px;color:var(--muted)}
-@media (max-width:420px){.bal{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
 
 /* month calendar (manager landing view) */
 .cal-layout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;align-items:start}
@@ -406,13 +406,27 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
     <div class="grid">
       <div class="stack">
         <div class="card">
-          <div class="card-head"><h2>Request time off or WFH</h2></div>
+          <div class="card-head"><h2>Make a request</h2></div>
           <form id="apply-form" novalidate>
             <fieldset class="fs" id="apply-fs">
               <div class="seg" role="group" aria-label="Request type">
                 <button type="button" data-type="leave" aria-pressed="true">Leave</button>
                 <button type="button" data-type="wfh" aria-pressed="false">Work from home</button>
+                <button type="button" data-type="reg" aria-pressed="false">Regularize</button>
               </div>
+              <div class="fs" id="ap-reg-fields" hidden>
+                <p class="muted" style="margin:0">Forgot to check in or check out? Tell your manager when you actually worked. It counts once they approve it.</p>
+                <label class="field"><span>Date</span><input type="date" id="rg-date"></label>
+                <div class="note" id="rg-was"></div>
+                <div class="row3">
+                  <label class="field"><span>Checked in at</span><input type="time" id="rg-in"></label>
+                  <label class="field"><span>Checked out at</span><input type="time" id="rg-out"></label>
+                  <label class="field"><span>Where</span><select id="rg-mode"><option value="office">Office</option><option value="wfh">Home</option></select></label>
+                </div>
+                <label class="field"><span>Reason</span><textarea id="rg-reason" rows="2" maxlength="200" placeholder="e.g. Forgot to check in, was in the office from 9:30"></textarea></label>
+                <div class="form-foot"><span class="muted" id="rg-hint"></span><button class="btn primary" type="submit" id="rg-submit">Send for approval</button></div>
+              </div>
+              <div class="fs" id="ap-leave-fields">
               <label class="field" id="cat-field"><span>Leave type</span>
                 <select id="ap-cat">
                   <option value="casual">Casual leave</option>
@@ -430,6 +444,7 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
               <div class="note danger" id="ap-clash" hidden></div>
               <div class="note danger" id="ap-wfh" hidden></div>
               <div class="form-foot"><span id="ap-count" class="muted"></span><button class="btn primary" type="submit">Send request</button></div>
+              </div>
             </fieldset>
           </form>
         </div>
@@ -580,12 +595,13 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
         <div class="card-head"><h2>Team settings</h2></div>
         <form id="settings-form" novalidate>
           <fieldset class="fs" id="settings-fs">
-            <div class="row3">
+            <div class="row2">
               <label class="field"><span>Default paid leave days / year</span><input type="number" id="st-allow" min="0" max="60" step="0.5"></label>
+              <label class="field"><span>Max days carried to next year</span><input type="number" id="st-carry" min="0" max="60" step="0.5"></label>
               <label class="field"><span>Expected hours / day</span><input type="number" id="st-hours" min="1" max="14" step="0.5"></label>
               <label class="field"><span>Max away per day</span><input type="number" id="st-max" min="1" max="20" step="1"></label>
             </div>
-            <p class="muted" style="margin:0">Set a different number of leave days for one person in the "Leave taken / allowed" column above; leave it empty to use the default. Max away per day: once this many people have asked for leave or WFH on a date, anyone else who asks gets a warning and their request is flagged in red.</p>
+            <p class="muted" style="margin:0">Set a different number of leave days for one person in the "Leave taken / allowed + carried" column above; leave it empty to use the default. Unused paid leave carries into the next year, up to the max above; the carried number is worked out automatically, and you can type a different one for a person (for example their leftover from before the app was used). Max away per day: once this many people have asked for leave or WFH on a date, anyone else who asks gets a warning and their request is flagged in red.</p>
             <div class="row2">
               <label class="field"><span>Saturday rota: on</span><input type="date" id="st-anchor"></label>
               <label class="field"><span>the group on duty is</span><select id="st-anchor-group"><option value="1">Group 1</option><option value="2">Group 2</option><option value="3">Group 3</option><option value="4">Group 4</option><option value="5">Group 5</option></select></label>
@@ -805,13 +821,13 @@ const S = {
   roster: new Map(), att: new Map(), reqs: new Map(), tasks: new Map(), appr: new Map(), holds: new Map(),
   clash: {byDate: new Map(), flagged: new Map(), max: 2},
   invites: null, inviteRunning: false, inviteDone: false,
-  settings: {allowance: 18, hours: 8, maxAway: 2},
+  settings: {allowance: 34, carryMax: 10, hours: 8, maxAway: 2},
   events: new Map(), bdYear: new Date().getFullYear(),
   names: {}, nameSig: '',
   subs: new Map(), registering: false,
   view: 'today', mode: null, applyType: 'leave',
   calMonth: mkey(new Date()), taskFilter: 'mine',
-  ts: {person: null, month: mkey(new Date())}, tsCache: new Map(), tsLoading: new Set(),
+  ts: {person: null, month: mkey(new Date())}, tsCache: new Map(), tsLoading: new Set(), regForm: null,
   busy: false,
 };
 
@@ -962,6 +978,24 @@ function allowOf(id) {
   const v = (S.settings.allowanceBy || {})[id];
   return v != null && v !== '' && !isNaN(Number(v)) ? Number(v) : (Number(S.settings.allowance) || 0);
 }
+/* Leave years start with this app; before it there is no record of what was taken. */
+const FIRST_LEAVE_YEAR = 2026;
+const carryMax = () => Math.max(0, Number(S.settings.carryMax ?? 10) || 0);
+/* Days carried into `year` from the year before: unused paid leave, capped at carryMax.
+   A manager can set the number for one person (e.g. the first year, before the app had any record). */
+function carryOf(id, year) {
+  year = String(year);
+  const set = ((S.settings.carryBy || {})[year] || {})[id];
+  if (set != null && set !== '' && !isNaN(Number(set))) return Number(set);
+  const prev = Number(year) - 1;
+  if (prev < FIRST_LEAVE_YEAR) return 0;
+  const j = (S.roster.get(id) || {}).joined;
+  if (j && new Date(j).getFullYear() > prev) return 0;
+  const left = allowOf(id) + carryOf(id, prev) - leaveUsed(id, String(prev)).used;
+  return Math.min(carryMax(), Math.max(0, left));
+}
+/* Paid leave a person can take in `year`: this year's allowance plus what they carried forward. */
+const totalOf = (id, year) => allowOf(id) + carryOf(id, year);
 const weekOf = k => { const d = pkey(k); const m = addDays(d, -((d.getDay() + 6) % 7)); return Array.from({length: 7}, (_, i) => dkey(addDays(m, i))); };
 function wfhDays(uid, k, exclude) {
   const out = new Set();
@@ -1006,6 +1040,112 @@ function extraMs(uid, a) {
   if (!isWorkDay(uid, pkey(a.date))) return w;
   return Math.max(0, w - (Number(S.settings.hours) || 8) * 3600000);
 }
+/* ---- regularization: fixing a day someone forgot to check in (or out) ----
+   Stored on the day's attendance record as `reg` {inAt, outAt, mode, reason, at, by, status}.
+   An employee's request is 'pending' until a manager approves it; only then are inAt/outAt/mode set.
+   A manager's own change is applied straight away. */
+const REG_DAYS = 30; // how far back an employee can ask to regularize
+const hhmm = ms => { const d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+function canRegularize(uid, k) {
+  const t = todayKey();
+  if (k > t || k < windowStart()) return false;
+  if (!S.admin && (uid !== S.me || k < dkey(addDays(new Date(), -REG_DAYS)))) return false;
+  const a = S.att.get(uid)?.get(k);
+  if (k === t) return !!(a && a.inAt); // today: only to correct the check-in time
+  return true;
+}
+function pendingRegs() {
+  const out = [];
+  for (const [uid, m] of S.att) {
+    if (S.roster.get(uid)?.removed) continue;
+    for (const [k, a] of m) if (a.reg && a.reg.status === 'pending') out.push({uid, k, a, ...a.reg});
+  }
+  return out.sort((x, y) => x.k.localeCompare(y.k));
+}
+/* Recent working days with no check-in, no approved leave and no regularization asked for. */
+function missedDays(uid, back = 7) {
+  const out = [], j = (S.roster.get(uid) || {}).joined, jk = j ? dkey(new Date(j)) : '';
+  for (let i = 1; i <= back; i++) {
+    const d = addDays(new Date(), -i), k = dkey(d);
+    if (k < jk || k < windowStart() || !isWorkDay(uid, d)) continue;
+    const a = S.att.get(uid)?.get(k);
+    if ((a && a.inAt) || (a && a.reg && (a.reg.status === 'pending' || a.reg.status === 'approved')) || reqOn(uid, k, 'leave')) continue;
+    out.push(k);
+  }
+  return out;
+}
+function openRegForm(uid, k) {
+  const a = S.att.get(uid)?.get(k) || {};
+  const r = a.reg && a.reg.status === 'pending' ? a.reg : null;
+  const src = r || a;
+  S.regForm = {uid, k,
+    in: src.inAt ? hhmm(src.inAt) : '09:30',
+    out: src.outAt ? hhmm(src.outAt) : (k === todayKey() ? '' : '18:30'),
+    mode: src.mode || (reqOn(uid, k, 'wfh') ? 'wfh' : 'office'),
+    reason: r ? r.reason || '' : ''};
+}
+/* Saves a regularization. f = {in:'HH:MM', out:'HH:MM'|'', mode, reason}. Employees send a request;
+   managers' changes apply straight away. Resolves true when saved. */
+async function submitReg(pid, k, f) {
+  if (!k) { toast('Pick the date to regularize.', true); return false; }
+  if (!canRegularize(pid, k)) {
+    toast(k > todayKey() ? "You can't regularize a future date." : k === todayKey() ? 'Check in on the Today page first; you can then fix the time here.' : `You can only regularize the last ${REG_DAYS} days. Ask your manager.`, true);
+    return false;
+  }
+  const today = k === todayKey();
+  const toMs = v => { if (!v) return null; const [h, mi] = v.split(':').map(Number); const d = pkey(k); d.setHours(h, mi, 0, 0); return d.getTime(); };
+  const inAt = toMs(f.in), outAt = toMs(f.out), reason = String(f.reason || '').trim().slice(0, 200);
+  const mode = f.mode === 'wfh' ? 'wfh' : 'office';
+  if (!inAt) { toast('Enter the time you checked in.', true); return false; }
+  if (!outAt && !today) { toast('Enter the time you checked out.', true); return false; }
+  if (outAt && outAt <= inAt) { toast('The check-out time has to be after the check-in time.', true); return false; }
+  if (inAt > Date.now() || (outAt && outAt > Date.now())) { toast("Times can't be in the future.", true); return false; }
+  if (!S.admin && !reason) { toast('Add a short reason for your manager.', true); return false; }
+  const ref = S.db.doc(`people/${pid}/attendance/${k}`), now = Date.now();
+  const reg = {inAt, outAt, mode, reason, at: now, by: S.me};
+  const done = () => S.tsCache.delete(pid + '|' + k.slice(0, 7));
+  if (S.admin) return guard(() => ref.set({date: k, inAt, outAt, mode, regularized: true, reg: {...reg, status: 'approved', decidedBy: S.me, decidedAt: now}}, {merge: true}).then(done),
+    `${fmtShort(k)} regularized${pid !== S.me ? ' for ' + first(pid) : ''}`);
+  return guard(() => ref.set({date: k, reg: {...reg, status: 'pending', decidedBy: null, decidedAt: null}}, {merge: true}).then(done),
+    'Sent to your manager for approval');
+}
+/* Leave & WFH tab, Regularize: show what was recorded for the chosen date and fill the times in. */
+function fillRegTab(force) {
+  const k = $('#rg-date').value;
+  const a = (k && S.att.get(S.me)?.get(k)) || {};
+  const r = a.reg && a.reg.status === 'pending' ? a.reg : null;
+  const lv = k ? reqOn(S.me, k, 'leave') : null;
+  const was = !k ? 'Pick the day you forgot to check in or check out.'
+    : r ? `<b>Already waiting for approval:</b> ${esc(fmtTime(r.inAt))} → ${r.outAt ? esc(fmtTime(r.outAt)) : 'still in'}. Sending again replaces it.`
+    : a.inAt ? (a.outAt ? `Recorded: ${esc(fmtTime(a.inAt))} → ${esc(fmtTime(a.outAt))}. You can correct the times.` : k === todayKey() ? `Checked in at ${esc(fmtTime(a.inAt))}, still working.` : `<b>Forgot to check out.</b> Checked in at ${esc(fmtTime(a.inAt))}, no check-out.`)
+    : `<b>Forgot to check in.</b> Nothing recorded on ${esc(fmtDay(k))}.${lv ? ' You have approved leave that day.' : ''}`;
+  const box = $('#rg-was'); if (box._h !== was) { box.innerHTML = was; box._h = was; }
+  box.className = 'note' + (k && !r && !(a.inAt && a.outAt) && !(k === todayKey() && a.inAt) ? ' warn' : '');
+  $('#rg-hint').textContent = S.admin ? 'As a manager, your change applies straight away.' : `You can go back up to ${REG_DAYS} days.`;
+  $('#rg-submit').textContent = S.admin ? 'Save' : 'Send for approval';
+  if (!force) return;
+  const src = r || a;
+  $('#rg-in').value = src.inAt ? hhmm(src.inAt) : '';
+  $('#rg-out').value = src.outAt ? hhmm(src.outAt) : '';
+  $('#rg-mode').value = src.mode || (k && reqOn(S.me, k, 'wfh') ? 'wfh' : 'office');
+  $('#rg-reason').value = r ? r.reason || '' : '';
+}
+function regFormHTML() {
+  const f = S.regForm, today = f.k === todayKey();
+  const direct = S.admin;
+  return `<tr class="regrow"><td colspan="9"><div class="note">
+    <b>${direct ? 'Regularize' : 'Ask to regularize'} ${esc(fmtDay(f.k))}</b>${f.uid !== S.me ? ` for ${esc(first(f.uid))}` : ''}
+    <div class="fixrow">
+      <label class="muted" for="reg-in">In</label><input type="time" id="reg-in" data-regf="in" value="${esc(f.in)}">
+      <label class="muted" for="reg-out">Out</label><input type="time" id="reg-out" data-regf="out" value="${esc(f.out)}">
+      <select id="reg-mode" data-regf="mode" style="width:auto" aria-label="Where"><option value="office" ${f.mode !== 'wfh' ? 'selected' : ''}>Office</option><option value="wfh" ${f.mode === 'wfh' ? 'selected' : ''}>Home</option></select>
+      <input id="reg-reason" data-regf="reason" maxlength="200" placeholder="${direct ? 'Note (optional)' : 'Reason, e.g. forgot to check in'}" value="${esc(f.reason)}" style="flex:1;min-width:180px" aria-label="Reason">
+      <button class="btn small primary" type="button" data-act="reg-save" ${canAct() ? '' : 'disabled'}>${direct ? 'Save' : 'Send for approval'}</button>
+      <button class="btn small ghost" type="button" data-act="reg-close">Cancel</button>
+    </div>
+    <div class="muted" style="margin-top:6px">${direct ? 'This changes the record straight away and marks the day as regularized.' : `Your manager approves this before it counts.${today ? ' Leave Out empty if you are still working.' : ''}`}</div>
+  </div></td></tr>`;
+}
 const ordinal = n => n + (n === 2 ? 'nd' : n === 3 ? 'rd' : 'th');
 const chipClass = k => ({office: 'office', wfh: 'wfh', wfhplan: 'wfh pending', leave: 'leave', out: '', idle: ''}[k] || '');
 
@@ -1020,7 +1160,7 @@ function doRender() {
 function renderHeader() {
   $('#today-date').textContent = new Date().toLocaleDateString([], {weekday: 'long', day: 'numeric', month: 'long'});
   setHTML($('#me-chip'), S.me ? `${avatar(S.me, 26)}<span class="nm">${nameHTML(S.me)}</span><span class="role">${TD.roleOf[S.me] === 'owner' ? 'Admin' : S.admin ? 'Manager' : 'Employee'}</span>` : '');
-  const pend = S.admin ? allReqs().filter(r => r.status === 'pending').length : 0;
+  const pend = S.admin ? allReqs().filter(r => r.status === 'pending').length + pendingRegs().length : 0;
   const pc = $('#pending-count'); pc.hidden = !pend; pc.textContent = pend;
 }
 function renderBanner() {
@@ -1077,7 +1217,14 @@ function renderToday() {
   // missed check-outs
   const missed = [...(S.att.get(S.me)?.values() || [])].filter(x => x.inAt && !x.outAt && x.date < t).sort((x, y) => y.date.localeCompare(x.date)).slice(0, 3);
   setHTML($('#punch-fix'), missed.map(x => `<div class="note warn" style="margin-top:14px">You didn't check out on <b>${esc(fmtDay(x.date))}</b> (checked in ${esc(fmtTime(x.inAt))}).
-    <div class="fixrow"><label class="muted" for="fix-${x.date}">Left at</label><input type="time" id="fix-${x.date}" value="18:00"><button class="btn small" type="button" data-act="fix-out" data-date="${x.date}" ${canAct() ? '' : 'disabled'}>Save check-out</button></div></div>`).join(''));
+    <div class="fixrow"><label class="muted" for="fix-${x.date}">Left at</label><input type="time" id="fix-${x.date}" value="18:00"><button class="btn small" type="button" data-act="fix-out" data-date="${x.date}" ${canAct() ? '' : 'disabled'}>Save check-out</button></div></div>`).join('')
+    + (() => {
+      // forgot to check in at all: offer to regularize
+      const miss = missedDays(S.me);
+      if (!miss.length) return '';
+      return `<div class="note warn" style="margin-top:14px">No check-in on <b>${esc(miss.slice(0, 3).map(fmtDay).join(', '))}</b>${miss.length > 3 ? ` and ${miss.length - 3} more day${miss.length - 3 === 1 ? '' : 's'}` : ''}. Forgot to check in? Ask to regularize ${miss.length > 1 ? 'those days' : 'it'}.
+        <div class="fixrow">${miss.slice(0, 3).map(k => `<button class="btn small" type="button" data-act="reg-tab" data-date="${k}" ${canAct() ? '' : 'disabled'}>Regularize ${esc(fmtShort(k))}</button>`).join('')}</div></div>`;
+    })());
 
   // my tasks
   const mine = allTasks().filter(x => x.uid === S.me && x.status !== 'done').sort(taskSort).slice(0, 6);
@@ -1087,7 +1234,7 @@ function renderToday() {
 
   // approvals mini
   if (S.admin) {
-    const pend = allReqs().filter(r => r.status === 'pending');
+    const pend = [...allReqs().filter(r => r.status === 'pending'), ...pendingRegs()];
     setHTML($('#appr-mini'), pend.length ? `${pend.length} request${pend.length > 1 ? 's' : ''} from ${[...new Set(pend.map(r => esc(first(r.uid))))].join(', ')}.` : 'Nothing pending.');
   }
 
@@ -1130,35 +1277,53 @@ function renderLeave() {
   if (!ready()) return;
   const year = String(new Date().getFullYear());
   const {used, pending} = leaveUsed(S.me, year);
-  const allow = allowOf(S.me);
+  const allow = allowOf(S.me), carry = carryOf(S.me, year), total = allow + carry;
   $('#bal-year').textContent = year;
-  setHTML($('#balance'), `<div><b>${allow}</b><span>Allowed</span></div><div><b>${used}</b><span>Taken</span></div><div><b>${pending}</b><span>Awaiting approval</span></div><div><b>${Math.max(0, allow - used)}</b><span>Remaining</span></div>`);
+  setHTML($('#balance'), `<div><b>${allow}</b><span>This year</span></div><div title="Unused days from ${Number(year) - 1}, up to ${carryMax()}"><b>${carry}</b><span>Carried forward</span></div><div><b>${used}</b><span>Taken</span></div><div><b>${pending}</b><span>Awaiting approval</span></div><div><b>${Math.max(0, total - used)}</b><span>Remaining</span></div>`);
 
   const stChip = s => ({approved: '<span class="chip office">Approved</span>', rejected: '<span class="chip danger">Declined</span>', pending: '<span class="chip leave pending">Awaiting approval</span>', cancelled: '<span class="chip">Cancelled</span>'}[s]);
   const desc = r => `${r.type === 'wfh' ? 'Work from home' : (CAT[r.category] || 'Leave') + ' leave'}`;
   const range = r => r.from === r.to ? esc(fmtDay(r.from)) + (r.half ? ' (half day)' : '') : `${esc(fmtShort(r.from))} – ${esc(fmtDay(r.to))}`;
   const t = todayKey();
   const mine = allReqs().filter(r => r.uid === S.me).sort((a, b) => b.from.localeCompare(a.from)).slice(0, 25);
-  setHTML($('#my-reqs'), mine.length ? mine.map(r => {
+  // my regularization requests (kept on the attendance record)
+  const myRegs = [...(S.att.get(S.me)?.entries() || [])].filter(([, a]) => a.reg && a.reg.status !== 'cancelled' && a.reg.by === S.me).map(([k, a]) => ({from: k, regA: a}));
+  const regItem = (k, a) => {
+    const g = a.reg, st = g.status === 'approved' ? 'approved' : g.status === 'rejected' ? 'rejected' : 'pending';
+    return `<div class="item"><div class="main"><div class="title">Regularize · ${esc(fmtDay(k))}</div>
+    <div class="meta">${stChip(st)}<span class="mono">${esc(fmtTime(g.inAt))} → ${g.outAt ? esc(fmtTime(g.outAt)) : 'still in'}</span><span>${g.mode === 'wfh' ? 'Home' : 'Office'}</span>${g.reason ? `<span>“${esc(g.reason)}”</span>` : ''}</div></div>
+    <div class="acts">${st === 'pending' ? `<button class="btn small" type="button" data-act="reg-cancel" data-date="${k}" ${canAct() ? '' : 'disabled'}>Cancel</button>` : ''}</div></div>`;
+  };
+  const leaveItem = r => {
     const fl = flagDates(r);
     return `<div class="item ${fl.length ? 'flagged' : ''}"><div class="main"><div class="title">${desc(r)} · ${range(r)}</div>
     <div class="meta">${stChip(r.status)}<span>${workDays(r.from, r.to, r.half, r.uid)} working day${workDays(r.from, r.to, r.half, r.uid) === 1 ? '' : 's'}</span>${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
     ${fl.length ? `<div class="meta"><span class="chip danger">Flagged: ${maxAway()} or more people were already away on ${esc(listDates(fl))}</span></div>` : ''}
     ${wfhFlag(r)}</div>
     <div class="acts">${(r.status === 'pending' || r.status === 'approved') && r.to >= t ? btn('req-cancel', 'Cancel', r) : ''}</div></div>`;
-  }).join('')
-    : `<div class="empty">You haven't made any requests yet. Use the form to ask for leave or a work-from-home day.</div>`);
+  };
+  const all = [...mine, ...myRegs].sort((a, b) => b.from.localeCompare(a.from)).slice(0, 25);
+  setHTML($('#my-reqs'), all.length ? all.map(r => r.regA ? regItem(r.from, r.regA) : leaveItem(r)).join('')
+    : `<div class="empty">You haven't made any requests yet. Use the form to ask for leave, a work-from-home day or to regularize a day.</div>`);
 
   if (S.admin) {
     const pend = allReqs().filter(r => r.status === 'pending').sort((a, b) => a.from.localeCompare(b.from));
-    $('#appr-sub').textContent = pend.length ? `${pend.length} waiting` : '';
-    setHTML($('#approvals'), pend.length ? pend.map(r => {
+    const regs = pendingRegs();
+    $('#appr-sub').textContent = pend.length + regs.length ? `${pend.length + regs.length} waiting` : '';
+    const regHTML = regs.map(g => {
+      const was = g.a.inAt ? `${fmtTime(g.a.inAt)} → ${g.a.outAt ? fmtTime(g.a.outAt) : 'no check-out'}` : 'no check-in';
+      const dis = canAct() ? '' : 'disabled';
+      return `<div class="item"><div class="main">${who(g.uid)}<div class="title">Regularize · ${esc(fmtDay(g.k))}</div>
+      <div class="meta"><span class="mono">${esc(fmtTime(g.inAt))} → ${g.outAt ? esc(fmtTime(g.outAt)) : 'still in'}</span><span class="chip ${g.mode === 'wfh' ? 'wfh' : 'office'} nodot">${g.mode === 'wfh' ? 'Home' : 'Office'}</span>${g.outAt ? `<span>${esc(fmtDur(g.outAt - g.inAt))}</span>` : ''}<span class="faint">was: ${esc(was)}</span>${g.reason ? `<span>“${esc(g.reason)}”</span>` : ''}</div></div>
+      <div class="acts"><button class="btn small ok" type="button" data-act="reg-decide" data-uid="${esc(g.uid)}" data-date="${g.k}" data-status="approved" ${dis}>Approve</button><button class="btn small no" type="button" data-act="reg-decide" data-uid="${esc(g.uid)}" data-date="${g.k}" data-status="rejected" ${dis}>Decline</button></div></div>`;
+    }).join('');
+    setHTML($('#approvals'), pend.length + regs.length ? regHTML + pend.map(r => {
       const yr = String(r.from).slice(0, 4);
       const lu = r.type === 'leave' ? leaveUsed(r.uid, yr) : null;
       const fl = flagDates(r);
       const others = fl.length ? [...new Set((S.clash.byDate.get(fl[0]) || []).filter(x => x.uid !== r.uid && (x.createdAt || 0) < (r.createdAt || 0)).map(x => first(x.uid)))] : [];
       return `<div class="item ${fl.length ? 'flagged' : ''}"><div class="main">${who(r.uid)}<div class="title">${desc(r)} · ${range(r)}</div>
-      <div class="meta"><span>${workDays(r.from, r.to, r.half, r.uid)} working day(s)</span>${lu ? `<span>${lu.used} of ${allowOf(r.uid)} days taken in ${yr}${lu.used + workDays(r.from, r.to, r.half, r.uid) > allowOf(r.uid) && r.category !== 'unpaid' ? ' · <b style="color:var(--danger)">over their allowance</b>' : ''}</span>` : ''}${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
+      <div class="meta"><span>${workDays(r.from, r.to, r.half, r.uid)} working day(s)</span>${lu ? `<span>${lu.used} of ${totalOf(r.uid, yr)} days taken in ${yr}${carryOf(r.uid, yr) ? ` (incl. ${carryOf(r.uid, yr)} carried forward)` : ''}${lu.used + workDays(r.from, r.to, r.half, r.uid) > totalOf(r.uid, yr) && r.category !== 'unpaid' ? ' · <b style="color:var(--danger)">over their allowance</b>' : ''}</span>` : ''}${r.reason ? `<span>“${esc(r.reason)}”</span>` : ''}</div>
       ${fl.length ? `<div class="meta"><span class="chip danger">Over the limit on ${esc(listDates(fl))}</span>${others.length ? `<span>Already away: ${esc(others.join(', '))}</span>` : ''}</div>` : ''}
       ${wfhFlag(r)}</div>
       <div class="acts">${btn('approve', 'Approve', r, 'approved', 'small ok')}${btn('approve', 'Decline', r, 'rejected', 'small no')}</div></div>`;
@@ -1302,7 +1467,9 @@ function timesheetRows(uid, m) {
     } else if (lv) { status = (CAT[lv.category] || '') + ' leave' + (lv.half ? ' (½)' : ''); }
     else if (!isWorkDay(uid, d)) { status = offLabel(d); cls = 'wk'; }
     else { status = k === t ? 'Not in yet' : 'No record'; }
-    return {k, status, mode, inT, outT, hrs, cls, ex, ot};
+    const rs = a && a.reg ? a.reg.status : '';
+    const reg = rs === 'pending' ? 'Regularization pending' : rs === 'approved' && a.regularized ? 'Regularized' : rs === 'rejected' ? 'Regularization declined' : '';
+    return {k, status, mode, inT, outT, hrs, cls, ex, ot, reg, regReason: a && a.reg ? a.reg.reason || '' : ''};
   });
   return {rows, loading};
 }
@@ -1326,10 +1493,20 @@ function renderTimesheet() {
     <div><b>${fmtDur(totalH * 3600000)}</b><span>Total hours</span></div><div><b>${withH.length ? fmtDur(totalH / withH.length * 3600000) : '—'}</b><span>Average per day</span></div>
     <div><b>${fmtDur(rows.reduce((s, r) => s + r.ex, 0) * 3600000)}</b><span>Extra hours</span></div><div><b>${pctHTML(officeStats(S.ts.person, S.ts.month + '-01', monthDays(S.ts.month).slice(-1)[0]).pct)}</b><span>Office attendance</span></div>`);
   if (!rows.length) { setHTML($('#ts-table'), '<div class="empty">This month hasn\'t started yet.</div>'); return; }
-  setHTML($('#ts-table'), `<table><thead><tr><th>Date</th><th>Status</th><th>Where</th><th class="num">In</th><th class="num">Out</th><th class="num">Hours</th><th class="num">Extra</th><th>Overtime work</th></tr></thead><tbody>
-    ${rows.slice().reverse().map(r => `<tr class="${r.cls}"><td>${esc(fmtDay(r.k))}</td><td>${r.status === 'Present' ? '<span class="chip office nodot">Present</span>' : /leave/.test(r.status) ? `<span class="chip leave nodot">${esc(r.status)}</span>` : r.status === 'No record' ? `<span class="chip danger nodot">No record</span>` : esc(r.status)}</td>
-    <td>${esc(r.mode)}</td><td class="num">${esc(r.inT)}</td><td class="num">${r.outT === 'missing' ? '<span style="color:var(--danger)">missing</span>' : esc(r.outT)}</td><td class="num hrs">${r.hrs != null ? esc(fmtDur(r.hrs * 3600000)) : ''}</td><td class="num">${r.ex >= 0.25 ? `<b>+${esc(fmtDur(r.ex * 3600000))}</b>` : ''}</td><td>${esc(r.ot)}</td></tr>`).join('')}
+  const uid = S.ts.person, f = S.regForm;
+  const regChip = r => !r.reg ? '' : ` <span class="chip ${r.reg === 'Regularized' ? 'accent' : r.reg === 'Regularization declined' ? 'danger' : 'accent pending'} nodot" title="${esc(r.regReason)}">${esc(r.reg)}</span>`;
+  const regBtn = r => {
+    if (!canRegularize(uid, r.k) || /leave/.test(r.status) || (r.cls === 'wk' && !r.reg)) return '';
+    const open = f && f.uid === uid && f.k === r.k;
+    const need = r.status === 'No record' || r.outT === 'missing' || r.reg === 'Regularization declined';
+    return `<button class="btn small ${need ? '' : 'ghost'}" type="button" data-act="${open ? 'reg-close' : 'reg-open'}" data-uid="${esc(uid)}" data-date="${r.k}" ${canAct() ? '' : 'disabled'}>${open ? 'Close' : r.reg === 'Regularization pending' ? 'Edit request' : need ? 'Regularize' : 'Fix times'}</button>`;
+  };
+  const fe = document.activeElement, fid = fe && fe.dataset && fe.dataset.regf ? fe.id : null;
+  setHTML($('#ts-table'), `<table><thead><tr><th>Date</th><th>Status</th><th>Where</th><th class="num">In</th><th class="num">Out</th><th class="num">Hours</th><th class="num">Extra</th><th>Overtime work</th><th></th></tr></thead><tbody>
+    ${rows.slice().reverse().map(r => `<tr class="${r.cls}"><td>${esc(fmtDay(r.k))}</td><td style="white-space:nowrap">${r.status === 'Present' ? '<span class="chip office nodot">Present</span>' : /leave/.test(r.status) ? `<span class="chip leave nodot">${esc(r.status)}</span>` : r.status === 'No record' ? `<span class="chip danger nodot">No record</span>` : esc(r.status)}${regChip(r)}</td>
+    <td>${esc(r.mode)}</td><td class="num">${esc(r.inT)}</td><td class="num">${r.outT === 'missing' ? '<span style="color:var(--danger)">missing</span>' : esc(r.outT)}</td><td class="num hrs">${r.hrs != null ? esc(fmtDur(r.hrs * 3600000)) : ''}</td><td class="num">${r.ex >= 0.25 ? `<b>+${esc(fmtDur(r.ex * 3600000))}</b>` : ''}</td><td>${esc(r.ot)}</td><td style="text-align:right">${regBtn(r)}</td></tr>${f && f.uid === uid && f.k === r.k ? regFormHTML() : ''}`).join('')}
     </tbody></table>`);
+  if (fid && document.activeElement !== $('#' + fid)) $('#' + fid)?.focus({preventScroll: true});
 }
 
 function renderTeam() {
@@ -1344,6 +1521,8 @@ function renderTeam() {
   const dnames = S.settings.displayNames || {};
   const ab = S.settings.allowanceBy || {};
   const allowInput = id => `<input type="number" class="dn-input" data-allowfor="${esc(id)}" min="0" max="60" step="0.5" value="${ab[id] != null ? esc(ab[id]) : ''}" placeholder="${esc(String(Number(S.settings.allowance) || 0))}" aria-label="Paid leave days for ${esc(nm(id))}" title="Paid leave days this year. Leave empty to use the team default." style="width:72px;min-width:0;text-align:right" ${canAct() ? '' : 'disabled'}>`;
+  const cb = (S.settings.carryBy || {})[year] || {};
+  const carryInput = id => `<input type="number" class="dn-input" data-carryfor="${esc(id)}" min="0" max="60" step="0.5" value="${cb[id] != null ? esc(cb[id]) : ''}" placeholder="${esc(String(carryOf(id, year)))}" aria-label="Days carried forward into ${year} for ${esc(nm(id))}" title="Unused days carried forward from ${Number(year) - 1} (worked out automatically, up to ${carryMax()}). Type a number to set it by hand; leave empty for the automatic value." style="width:64px;min-width:0;text-align:right" ${canAct() ? '' : 'disabled'}>`;
   const bdInput = id => `<input class="dn-input" data-bdayfor="${esc(id)}" value="${esc(bdOf(id))}" placeholder="DD-MM" inputmode="numeric" maxlength="5" aria-label="Birthday of ${esc(nm(id))}" title="Birthday as day-month, e.g. 05-03 for 5 March" style="width:76px;min-width:0" ${canAct() ? '' : 'disabled'}>`;
   const fmtBd = id => { const b = bdOf(id); if (!b) return '<span class="faint">—</span>'; const [d, mo] = b.split('-').map(Number); return esc(new Date(2000, mo - 1, d).toLocaleDateString([], {day: 'numeric', month: 'short'})); };
   const roleCell = id => {
@@ -1353,13 +1532,13 @@ function renderTeam() {
     return `<select data-rolefor="${esc(id)}" aria-label="Role of ${esc(nm(id))}" style="width:auto" ${canAct() && id !== S.me ? '' : 'disabled'}><option value="member" ${r === 'member' ? 'selected' : ''}>Employee</option><option value="manager" ${r === 'manager' ? 'selected' : ''}>Manager</option></select>`;
   };
   const dnInput = id => `<input class="dn-input" data-dispname="${esc(id)}" value="${esc(dnames[id] || '')}" placeholder="${esc((S.names[id] && S.names[id].name) || 'Display name')}" aria-label="Display name" maxlength="40" ${canAct() ? '' : 'disabled'}>`;
-  setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Role</th><th>Display name</th>' : ''}<th>Today</th><th>Birthday</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken / allowed ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
+  setHTML($('#roster'), ppl.length ? `<table><thead><tr><th>Person</th>${S.admin ? '<th>Role</th><th>Display name</th>' : ''}<th>Today</th><th>Birthday</th><th>Saturday group</th>${S.admin ? `<th class="num">Leave taken / allowed + carried ${year}</th>` : ''}<th class="num">WFH days this month</th><th class="num">Office % (month)</th>${S.admin ? '<th class="num">Weeks over 1 WFH</th>' : ''}<th class="num">Open tasks</th><th class="num">Overdue</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
     ${ppl.map(id => {
       const s = todayStatus(id), lu = leaveUsed(id, year);
       const wfh = [...(S.att.get(id)?.values() || [])].filter(a => a.date && a.date.startsWith(m) && a.mode === 'wfh').length;
       const open = tasks.filter(x => x.uid === id && x.status !== 'done');
       const over = open.filter(x => x.due && x.due < todayKey()).length;
-      return `<tr><td>${who(id)}</td>${S.admin ? `<td>${roleCell(id)}</td><td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? bdInput(id) : fmtBd(id)}</td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num" style="white-space:nowrap">${lu.used} / ${allowInput(id)}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
+      return `<tr><td>${who(id)}</td>${S.admin ? `<td>${roleCell(id)}</td><td>${dnInput(id)}</td>` : ''}<td><span class="chip ${chipClass(s.k)}">${esc(s.label)}</span></td><td>${S.admin ? bdInput(id) : fmtBd(id)}</td><td>${S.admin ? satSel(id) : sg[id] ? 'Group ' + Number(sg[id]) : '<span class="faint">None</span>'}</td>${S.admin ? `<td class="num" style="white-space:nowrap">${lu.used} / ${allowInput(id)} + ${carryInput(id)}${lu.pending ? ` <span class="faint">(+${lu.pending})</span>` : ''}</td>` : ''}<td class="num">${wfh}</td><td class="num">${S.admin || id === S.me ? pctHTML(officeStats(id, m + '-01', todayKey()).pct) : '<span class="faint">—</span>'}</td>${S.admin ? (() => { const w = wfhOverWeeksInMonth(id, m); return `<td class="num" ${w ? 'style="color:var(--danger)"' : ''}>${w}</td>`; })() : ''}<td class="num">${open.length}</td><td class="num" ${over ? 'style="color:var(--danger)"' : ''}>${over}</td>
       ${S.admin ? `<td style="text-align:right">${id !== S.me && TD.roleOf[id] !== 'owner' ? btn('remove', 'Remove', {uid: id, id: id}, null, 'small ghost') : ''}</td>` : ''}</tr>`;
     }).join('')}</tbody></table>` : '<div class="empty">No one has joined yet.</div>');
   if (S.admin) {
@@ -1463,6 +1642,9 @@ function updateForms() {
   $('#tk-who').disabled = !on || !S.admin;
   $$('[data-type]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === S.applyType)));
   $('#cat-field').hidden = S.applyType !== 'leave';
+  $('#ap-reg-fields').hidden = S.applyType !== 'reg';
+  $('#ap-leave-fields').hidden = S.applyType === 'reg';
+  if (S.applyType === 'reg' && ready()) fillRegTab(false);
   const f = $('#ap-from').value, tt = $('#ap-to').value;
   $('#half-field').hidden = !(f && f === tt);
   if ($('#half-field').hidden) $('#ap-half').checked = false;
@@ -1641,8 +1823,14 @@ function subscribeCore() {
   }, e => { clearTimeout(timer); S.status = 'error'; renderAll(); });
   S.db.collection('holds').onSnapshot(s => { S.holds = new Map(s.docs.map(d => [d.id, d.data()])); renderAll(); }, onErr);
   S.db.doc('settings/team').onSnapshot(s => {
-    if (s.exists) S.settings = {...S.settings, ...s.data()};
+    if (s.exists) {
+      const d = s.data();
+      S.settings = {...S.settings, ...d};
+      // Settings saved before the carry-forward policy: move to 34 days a year, up to 10 carried.
+      if (d.carryMax == null) S.settings = {...S.settings, allowance: 34, carryMax: 10};
+    }
     if (document.activeElement !== $('#st-allow')) $('#st-allow').value = S.settings.allowance;
+    if (document.activeElement !== $('#st-carry')) $('#st-carry').value = carryMax();
     if (document.activeElement !== $('#st-hours')) $('#st-hours').value = S.settings.hours;
     if (document.activeElement !== $('#st-max')) $('#st-max').value = maxAway();
     if (document.activeElement !== $('#st-anchor')) $('#st-anchor').value = S.settings.satAnchor || '2026-11-21';
@@ -1684,6 +1872,33 @@ document.addEventListener('click', e => {
     if (d.getTime() <= a.inAt) { toast('Check-out has to be after your check-in time.', true); return; }
     guard(() => S.db.doc(`people/${S.me}/attendance/${date}`).update({outAt: d.getTime(), corrected: true}), 'Check-out saved');
   }
+  else if (act === 'reg-open') {
+    const k = b.dataset.date;
+    if (!canRegularize(uid, k)) { toast(S.admin ? 'That day is too far back to change here.' : `You can only regularize the last ${REG_DAYS} days. Ask your manager.`, true); return; }
+    openRegForm(uid, k);
+    S.ts.person = uid; S.ts.month = k.slice(0, 7);
+    if (S.view !== 'timesheet') location.hash = '#timesheet';
+    renderAll();
+    setTimeout(() => { const el = $('#reg-in'); if (el) { el.scrollIntoView({block: 'center', behavior: 'smooth'}); el.focus({preventScroll: true}); } }, 60);
+  }
+  else if (act === 'reg-close') { S.regForm = null; renderAll(); }
+  else if (act === 'reg-tab') { openRegTab(b.dataset.date); location.hash = '#leave'; updateForms(); setTimeout(() => $('#rg-in').focus(), 60); }
+  else if (act === 'reg-save') { if (S.regForm) submitReg(S.regForm.uid, S.regForm.k, S.regForm).then(ok => { if (ok) S.regForm = null; }); }
+  else if (act === 'reg-cancel') {
+    const k = b.dataset.date, a = S.att.get(S.me)?.get(k);
+    if (!a || !a.reg || a.reg.status !== 'pending') return;
+    guard(() => S.db.doc(`people/${S.me}/attendance/${k}`).update({'reg.status': 'cancelled'}).then(() => S.tsCache.delete(S.me + '|' + k.slice(0, 7))), 'Request cancelled');
+  }
+  else if (act === 'reg-decide') {
+    const k = b.dataset.date, a = S.att.get(uid)?.get(k);
+    if (!S.admin || !a || !a.reg) return;
+    const now = Date.now(), g = a.reg;
+    const upd = status === 'approved'
+      ? {inAt: g.inAt, outAt: g.outAt ?? a.outAt ?? null, mode: g.mode === 'wfh' ? 'wfh' : 'office', regularized: true, 'reg.status': 'approved', 'reg.decidedBy': S.me, 'reg.decidedAt': now}
+      : {'reg.status': 'rejected', 'reg.decidedBy': S.me, 'reg.decidedAt': now};
+    guard(() => S.db.doc(`people/${uid}/attendance/${k}`).update(upd).then(() => S.tsCache.delete(uid + '|' + k.slice(0, 7))),
+      status === 'approved' ? `${fmtShort(k)} regularized for ${first(uid)}` : 'Regularization declined');
+  }
   else if (act === 'task-status') guard(() => tdoc(uid, id).update({status, updatedAt: Date.now(), doneAt: status === 'done' ? Date.now() : null}), status === 'done' ? 'Marked done' : 'Task updated');
   else if (act === 'task-del' || act === 'remove' || act === 'req-cancel' || act === 'ev-del') {
     if (b.dataset.armed !== '1') {
@@ -1715,7 +1930,19 @@ document.addEventListener('click', e => {
   }
 });
 
-$$('[data-type]').forEach(b => b.addEventListener('click', () => { S.applyType = b.dataset.type; updateForms(); }));
+$$('[data-type]').forEach(b => b.addEventListener('click', () => { S.applyType = b.dataset.type; if (S.applyType === 'reg') openRegTab(); updateForms(); }));
+/* Opens the Regularize tab on `k`, or on the latest day with no check-in / no check-out. */
+function openRegTab(k) {
+  S.applyType = 'reg';
+  const di = $('#rg-date');
+  di.max = todayKey(); di.min = S.admin ? windowStart() : dkey(addDays(new Date(), -REG_DAYS));
+  if (!k && !di.value) {
+    const noOut = [...(S.att.get(S.me)?.values() || [])].filter(x => x.inAt && !x.outAt && x.date < todayKey() && !(x.reg && x.reg.status === 'pending')).map(x => x.date);
+    k = [...missedDays(S.me), ...noOut].sort().pop() || dkey(addDays(new Date(), -1));
+  }
+  if (k) { di.value = k; fillRegTab(true); }
+}
+$('#rg-date').addEventListener('change', () => fillRegTab(true));
 ['ap-from', 'ap-to', 'ap-half'].forEach(id => $('#' + id).addEventListener('input', () => {
   const f = $('#ap-from'), tt = $('#ap-to');
   tt.min = f.value;
@@ -1725,6 +1952,12 @@ $$('[data-type]').forEach(b => b.addEventListener('click', () => { S.applyType =
 $('#apply-form').addEventListener('submit', async e => {
   e.preventDefault();
   if (!canAct()) return;
+  if (S.applyType === 'reg') {
+    const k = $('#rg-date').value;
+    const ok = await submitReg(S.me, k, {in: $('#rg-in').value, out: $('#rg-out').value, mode: $('#rg-mode').value, reason: $('#rg-reason').value});
+    if (ok) { $('#rg-reason').value = ''; fillRegTab(false); }
+    return;
+  }
   const from = $('#ap-from').value, to = $('#ap-to').value || from, half = $('#ap-half').checked && from === to;
   if (!from) { toast('Pick a start date.', true); return; }
   if (to < from) { toast('The end date is before the start date.', true); return; }
@@ -1763,12 +1996,13 @@ $('#settings-form').addEventListener('submit', e => {
   e.preventDefault();
   if (!canAct() || !S.admin) return;
   const allowance = Math.max(0, Math.min(60, Number($('#st-allow').value) || 0));
+  const carry = Math.max(0, Math.min(60, Number($('#st-carry').value) || 0));
   const hours = Math.max(1, Math.min(14, Number($('#st-hours').value) || 8));
   const max = Math.max(1, Math.min(20, Math.round(Number($('#st-max').value) || 2)));
   const anchor = $('#st-anchor').value || S.settings.satAnchor || '2026-11-21';
   if (pkey(anchor).getDay() !== 6) { toast('Pick a Saturday for the rota start.', true); return; }
   const anchorGroup = Number($('#st-anchor-group').value) || 1;
-  guard(() => S.db.doc('settings/team').set({...S.settings, allowance, hours, maxAway: max, satAnchor: anchor, satAnchorGroup: anchorGroup}), 'Settings saved');
+  guard(() => S.db.doc('settings/team').set({...S.settings, allowance, carryMax: carry, hours, maxAway: max, satAnchor: anchor, satAnchorGroup: anchorGroup}), 'Settings saved');
 });
 document.addEventListener('change', e => {
   const al = e.target.closest && e.target.closest('[data-allowfor]');
@@ -1777,6 +2011,15 @@ document.addEventListener('change', e => {
     if (raw === '') delete by[al.dataset.allowfor];
     else { const v = Number(raw); if (isNaN(v) || v < 0 || v > 60) { toast('Enter a number of days from 0 to 60.', true); return; } by[al.dataset.allowfor] = Math.round(v * 2) / 2; }
     guard(() => S.db.doc('settings/team').set({...S.settings, allowanceBy: by}), `Leave allowance saved for ${first(al.dataset.allowfor)}`);
+    return;
+  }
+  const cf = e.target.closest && e.target.closest('[data-carryfor]');
+  if (cf && canAct() && S.admin) {
+    const year = String(new Date().getFullYear()), all = {...(S.settings.carryBy || {})}, by = {...(all[year] || {})}, raw = cf.value.trim();
+    if (raw === '') delete by[cf.dataset.carryfor];
+    else { const v = Number(raw); if (isNaN(v) || v < 0 || v > 60) { toast('Enter a number of days from 0 to 60.', true); return; } by[cf.dataset.carryfor] = Math.round(v * 2) / 2; }
+    all[year] = by;
+    guard(() => S.db.doc('settings/team').set({...S.settings, carryBy: all}), `Carried-forward days saved for ${first(cf.dataset.carryfor)}`);
     return;
   }
   const rs = e.target.closest && e.target.closest('[data-rolefor]');
@@ -1834,8 +2077,10 @@ $('#ev-form').addEventListener('submit', async e => {
   if (ok) { $('#ev-title').value = ''; $('#ev-notes').value = ''; S.bdYear = Number(date.slice(0, 4)); }
 });
 $('#sp-period').addEventListener('change', renderAll);
-$('#ts-person').addEventListener('change', e => { S.ts.person = e.target.value; renderAll(); });
-$('#ts-month').addEventListener('change', e => { if (e.target.value) { S.ts.month = e.target.value; renderAll(); } });
+$('#ts-person').addEventListener('change', e => { S.ts.person = e.target.value; S.regForm = null; renderAll(); });
+$('#ts-month').addEventListener('change', e => { if (e.target.value) { S.ts.month = e.target.value; S.regForm = null; renderAll(); } });
+// keep what's typed in the regularize form, so a live update re-rendering the table doesn't lose it
+['input', 'change'].forEach(ev => document.addEventListener(ev, e => { const k = e.target.dataset && e.target.dataset.regf; if (k && S.regForm) S.regForm[k] = e.target.value; }));
 $('#cal-prev').addEventListener('click', () => { const d = pkey(S.calMonth + '-01'); d.setMonth(d.getMonth() - 1); S.calMonth = mkey(d); renderAll(); });
 $('#cal-next').addEventListener('click', () => { const d = pkey(S.calMonth + '-01'); d.setMonth(d.getMonth() + 1); S.calMonth = mkey(d); renderAll(); });
 $('#cal-today').addEventListener('click', () => { S.calMonth = mkey(new Date()); renderAll(); });
@@ -1844,7 +2089,7 @@ $('#ts-csv').addEventListener('click', async () => {
   const {rows, loading} = timesheetRows(S.ts.person, S.ts.month);
   if (loading) return;
   const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = ['Date,Status,Where,Check in,Check out,Hours,Extra hours,Overtime work'].concat(rows.map(r => [r.k, r.status, r.mode, r.inT, r.outT, r.hrs != null ? r.hrs.toFixed(2) : '', r.ex ? r.ex.toFixed(2) : '', r.ot].map(q).join(','))).join('\n');
+  const csv = ['Date,Status,Where,Check in,Check out,Hours,Extra hours,Overtime work,Regularization,Regularization reason'].concat(rows.map(r => [r.k, r.status, r.mode, r.inT, r.outT, r.hrs != null ? r.hrs.toFixed(2) : '', r.ex ? r.ex.toFixed(2) : '', r.ot, r.reg, r.reg ? r.regReason : ''].map(q).join(','))).join('\n');
   const name = nm(S.ts.person).replace(/[^\w-]+/g, '-').replace(/^-|-$/g, '') || 'person';
   try { await S.dl.save({filename: `timesheet-${name}-${S.ts.month}.csv`, data: csv}); }
   catch (e) { if (e && e.code !== 'declined') toast("Couldn't prepare the download here.", true); }
@@ -1890,7 +2135,7 @@ window.addEventListener('hashchange', route);
 async function boot() {
   route();
   $('#ap-from').value = todayKey(); $('#ap-to').value = todayKey(); $('#ap-to').min = todayKey();
-  $('#st-allow').value = S.settings.allowance; $('#st-hours').value = S.settings.hours; $('#st-max').value = S.settings.maxAway; $('#st-anchor').value = '2026-11-21';
+  $('#st-allow').value = S.settings.allowance; $('#st-carry').value = carryMax(); $('#st-hours').value = S.settings.hours; $('#st-max').value = S.settings.maxAway; $('#st-anchor').value = '2026-11-21';
   $('#en-from').value = todayKey(); $('#en-to').value = todayKey(); $('#ev-date').value = todayKey();
   renderAll();
   setInterval(renderAll, 30000);
