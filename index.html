@@ -166,6 +166,8 @@ form .fs{display:flex;flex-direction:column;gap:12px}
 .tally{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .trow{display:grid;grid-template-columns:minmax(120px,1.1fr) 150px minmax(120px,2fr) 150px;gap:12px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
 .trow.head{border-top:0;padding:0 0 4px;font-size:11px;color:var(--faint)}
+.trow.simple{grid-template-columns:minmax(0,1fr) auto}
+.trow.simple.head{display:grid}
 .trow .times{font-size:12.5px;color:var(--muted);text-align:right}
 a.chip.geo{text-decoration:none}
 a.chip.geo:hover{text-decoration:underline}
@@ -1361,19 +1363,10 @@ function renderToday() {
   setHTML($('#tally'), ppl.length ? [
     [c('office'), 'in office', 'office'], [c('wfh'), 'working from home', 'wfh'], [c('out'), 'checked out', ''],
     [c('leave'), 'on leave', 'leave'], [c('idle') + c('wfhplan'), 'not in yet', '']].filter(x => x[0]).map(x => `<span class="chip ${x[2]}">${x[0]} ${x[1]}</span>`).join('') : '');
-  const S0 = 7 * 60, S1 = 21 * 60;
-  const pos = ms => { const d = new Date(ms); const m = d.getHours() * 60 + d.getMinutes(); return Math.max(0, Math.min(100, (m - S0) / (S1 - S0) * 100)); };
-  const nowPos = pos(now);
-  const ticks = [9, 12, 15, 18].map(h => `<span style="left:${(h * 60 - S0) / (S1 - S0) * 100}%">${pad(h)}:00</span>`).join('');
-  setHTML($('#team-today'), ppl.length ? `<div class="trow head"><span>Person</span><span>Status</span><div class="ticks">${ticks}</div><span style="text-align:right">Hours</span></div>` + st.map(x => {
-    const a = x.a;
-    const bar = sessionsOf(a).map(s => `<div class="span ${a.mode === 'wfh' ? 'wfh' : ''} ${s.out ? '' : 'open'}" style="left:${pos(s.in)}%;width:${Math.max(0.6, pos(s.out || now) - pos(s.in))}%" title="${esc(fmtTime(s.in))}–${s.out ? esc(fmtTime(s.out)) : 'now'}"></div>`).join('');
-    const br = a && a.inAt ? breakMs(a) : 0;
-    const gx = a && a.inAt && (S.admin || x.id === S.me) ? geoOf(x.id, t) : null;
-    const gl = gx ? geoChip(gx.in, a.mode, 'In: ') + (a.outAt ? geoChip(gx.out, a.mode, 'Out: ') : '') : '';
-    const times = a && a.inAt ? `<span class="mono" title="${esc(sessText(a))}">${esc(fmtTime(a.inAt))} – ${a.outAt ? esc(fmtTime(a.outAt)) : 'now'} · ${esc(fmtDur(workedMs(a, now)))}</span>${br ? `<div class="faint" style="font-size:11.5px">${esc(fmtDur(br))} break · ${sessionsOf(a).length} sessions</div>` : ''}${gl ? `<div class="geo-row">${gl}</div>` : ''}` : '<span class="faint">—</span>';
-    return `<div class="trow">${who(x.id)}<span><span class="chip ${chipClass(x.k)}">${esc(x.label)}</span></span><div class="tl">${bar}<div class="now" style="left:${nowPos}%" title="Now"></div></div><div class="times">${times}</div></div>`;
-  }).join('') : `<div class="empty">No one has joined yet. Teammates appear here the first time they open this page.</div>`);
+  // Everyone (managers included) sees only who is in the office or working from home: no times, hours or locations.
+  setHTML($('#team-today'), ppl.length ? `<div class="trow simple head"><span>Person</span><span>Status</span></div>` + st.map(x =>
+    `<div class="trow simple">${who(x.id)}<span><span class="chip ${chipClass(x.k)}">${esc(x.label)}</span></span></div>`
+  ).join('') : `<div class="empty">No one has joined yet. Teammates appear here the first time they open this page.</div>`);
 }
 
 function btn(act, label, x, status, cls = 'small') {
