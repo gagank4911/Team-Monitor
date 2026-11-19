@@ -628,7 +628,7 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
             <div class="form-foot"><span class="muted">Days under the expected hours are flagged in timesheets.</span><button class="btn primary" type="submit">Save settings</button></div>
           </fieldset>
         </form>
-        <div class="note" style="margin-top:14px">Team members and managers are set in <b>config.js</b> and <b>firestore.rules</b>. Members can check in, request leave and update their own tasks, and see only their own leave requests and check-in locations. Managers can see everyone's check-in locations, the team calendar, approve leave, assign tasks to anyone, plan team bonding and change these settings.</div>
+        <div class="note" style="margin-top:14px">Team members and managers are set in <b>config.js</b> and <b>firestore.rules</b>. Members can check in, request leave and update their own tasks, and see the team calendar (who is on leave or working from home) but only their own check-in locations. Managers can see everyone's check-in locations, approve leave, assign tasks to anyone, plan team bonding and change these settings.</div>
       </div>
     </div>
   </section>
@@ -960,12 +960,16 @@ function allReqs() {
   }
   return out;
 }
-/* withWorked: also return leave the person cancelled for that day by working (see workedSet). */
+/* Checking in at the office on a day of a WFH request cancels the WFH for that day only. Those days are listed
+   in the request's `office`, so they don't count towards the 1-WFH-day-a-week rule. */
+const officeSet = r => new Set(r && r.type === 'wfh' && Array.isArray(r.office) ? r.office : []);
+/* withWorked: also return leave the person cancelled for that day by working (see workedSet),
+   and WFH the person cancelled by checking in at the office (see officeSet). */
 function reqOn(uid, day, type, statuses = ['approved'], withWorked = false) {
   const m = S.reqs.get(uid); if (!m) return null;
   for (const [id, r] of m) {
     if (r.type !== type || !(r.from <= day && day <= r.to)) continue;
-    if (!withWorked && workedSet(r).has(day)) continue;
+    if (!withWorked && (workedSet(r).has(day) || officeSet(r).has(day))) continue;
     const st = reqStatus(uid, id, r);
     if (statuses.includes(st)) return {id, ...r, status: st};
   }
@@ -1044,7 +1048,7 @@ function wfhDays(uid, k, exclude) {
     if (a && a.inAt && a.mode === 'wfh' && !fullLeaveOn(uid, day)) out.add(day); // working on a leave day isn't a WFH day
     const m = S.reqs.get(uid);
     if (m) for (const [id, r] of m) {
-      if (id === exclude || r.type !== 'wfh' || r.cancelled) continue;
+      if (id === exclude || r.type !== 'wfh' || r.cancelled || officeSet(r).has(day)) continue;
       const st = reqStatus(uid, id, r);
       if ((st === 'pending' || st === 'approved') && r.from <= day && day <= r.to && isWorkDay(uid, pkey(day))) out.add(day);
     }
@@ -1303,7 +1307,7 @@ function renderToday() {
       <button type="button" data-act="mode" data-mode="office" aria-pressed="${S.mode === 'office'}">Office</button>
       <button type="button" data-act="mode" data-mode="wfh" aria-pressed="${S.mode === 'wfh'}">Home</button></div>`;
     html = `<div class="hello">${hello}</div>
-      ${lv ? `<div class="note warn">You're on approved ${lv.half ? 'half-day ' : ''}leave today.${lv.half ? '' : ' If you work anyway, check in: today\'s leave is cancelled and the day goes back to your leave balance.'}</div>` : wf ? `<div class="note">Your work-from-home request for today is approved.</div>` : `<div class="muted">You haven't checked in yet today.</div>`}
+      ${lv ? `<div class="note warn">You're on approved ${lv.half ? 'half-day ' : ''}leave today.${lv.half ? '' : ' If you work anyway, check in: today\'s leave is cancelled and the day goes back to your leave balance.'}</div>` : wf ? `<div class="note">Your work-from-home request for today is approved.</div>` : reqOn(S.me, t, 'wfh', ['pending']) ? `<div class="note">Your work-from-home request for today is waiting for approval.</div>` : S.mode === 'wfh' && !S.admin ? `<div class="note warn">To work from home, apply for WFH on the Leave &amp; WFH tab first.</div>` : `<div class="muted">You haven't checked in yet today.</div>`}
       <div class="punch-actions">${seg}<button class="btn primary big" type="button" data-act="checkin" ${canAct() ? '' : 'disabled'}>${lv && !lv.half ? 'Check in and cancel today\'s leave' : 'Check in'}</button></div>
       <div class="faint" style="font-size:12px">Your location is recorded once when you check in and once when you check out. Only managers can see it.</div>`;
   } else if (!a.outAt) {
@@ -1356,14 +1360,23 @@ function renderToday() {
 
   // team today
   const ppl = people();
-  const st = ppl.map(id => ({id, ...todayStatus(id)}));
-  const order = {office: 0, wfh: 1, out: 2, wfhplan: 3, leave: 4, idle: 5};
+  /* Four statuses for everyone: in office, working from home, on leave, not checked in. Someone who has
+     checked out still shows where they worked today. A day off for that person shows as "Day off". */
+  const nowD = new Date();
+  const st = ppl.map(id => {
+    const s = todayStatus(id), a = s.a;
+    if (a && a.inAt) return a.mode === 'wfh' ? {id, k: 'wfh', label: 'Working from home'} : {id, k: 'office', label: 'In office'};
+    if (s.k === 'leave') return {id, k: 'leave', label: s.label};
+    if (!isWorkDay(id, nowD)) return {id, k: 'off', label: 'Day off'};
+    return {id, k: 'idle', label: 'Not checked in'};
+  });
+  const order = {office: 0, wfh: 1, leave: 2, idle: 3, off: 4};
   st.sort((x, y) => order[x.k] - order[y.k] || nm(x.id).localeCompare(nm(y.id)));
   const c = k => st.filter(x => x.k === k).length;
   setHTML($('#tally'), ppl.length ? [
-    [c('office'), 'in office', 'office'], [c('wfh'), 'working from home', 'wfh'], [c('out'), 'checked out', ''],
-    [c('leave'), 'on leave', 'leave'], [c('idle') + c('wfhplan'), 'not in yet', '']].filter(x => x[0]).map(x => `<span class="chip ${x[2]}">${x[0]} ${x[1]}</span>`).join('') : '');
-  // Everyone (managers included) sees only who is in the office or working from home: no times, hours or locations.
+    [c('office'), 'in office', 'office'], [c('wfh'), 'working from home', 'wfh'],
+    [c('leave'), 'on leave', 'leave'], [c('idle'), 'not checked in', ''], [c('off'), 'day off', '']].filter(x => x[0]).map(x => `<span class="chip ${x[2]}">${x[0]} ${x[1]}</span>`).join('') : '');
+  // Everyone (managers included) sees only the status: no times, hours or locations.
   setHTML($('#team-today'), ppl.length ? `<div class="trow simple head"><span>Person</span><span>Status</span></div>` + st.map(x =>
     `<div class="trow simple">${who(x.id)}<span><span class="chip ${chipClass(x.k)}">${esc(x.label)}</span></span></div>`
   ).join('') : `<div class="empty">No one has joined yet. Teammates appear here the first time they open this page.</div>`);
@@ -1459,9 +1472,11 @@ function renderCalendar() {
   };
   const chip = (r, long) => {
     const fl = flagged.has(r.uid + '/' + r.id);
-    const label = long ? (r.type === 'wfh' ? 'WFH' : (CAT[r.category] || '') + ' leave') + (r.half ? ' ½' : '') + (r.status === 'pending' ? ' · pending' : '')
+    // Employees see only "Leave" for other people; the leave type (sick, casual…) is for the person and managers.
+    const cat = S.admin || r.uid === S.me ? CAT[r.category] || '' : '';
+    const label = long ? (r.type === 'wfh' ? 'WFH' : cat ? cat + ' leave' : 'Leave') + (r.half ? ' ½' : '') + (r.status === 'pending' ? ' · pending' : '')
       : esc(first(r.uid)) + (r.type === 'wfh' ? ' · WFH' : '') + (r.half ? ' ½' : '');
-    const title = `${nm(r.uid)}: ${r.type === 'wfh' ? 'Work from home' : (CAT[r.category] || '') + ' leave'}${r.status === 'pending' ? ' (awaiting approval)' : ''}${fl ? ' (over the daily limit)' : ''}`;
+    const title = `${nm(r.uid)}: ${r.type === 'wfh' ? 'Work from home' : cat ? cat + ' leave' : 'Leave'}${r.status === 'pending' ? ' (awaiting approval)' : ''}${fl ? ' (over the daily limit)' : ''}`;
     return `<span class="cchip ${r.type === 'wfh' ? 'wfh' : 'leave'} ${r.status === 'pending' ? 'pending' : ''} ${fl ? 'flag' : ''}" title="${esc(title)}">${long ? esc(label) : label}</span>`;
   };
   let html = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => `<div class="dow">${d}</div>`).join('');
@@ -1979,12 +1994,21 @@ document.addEventListener('click', e => {
       return;
     }
     const home = (S.mode || 'office') === 'wfh';
+    // Employees can check in from home only with a WFH request for today (approved or waiting for approval).
+    if (home && !lv && !S.admin && !reqOn(S.me, t, 'wfh', ['approved', 'pending'])) {
+      toast('Apply for work from home on the Leave & WFH tab first. You can check in from home once you have sent the request.', true);
+      return;
+    }
     const n = home && !lv ? [...wfhDays(S.me, t, null)].filter(k => k !== t).length + 1 : 0;
     const mode = S.mode || 'office';
+    // Checking in at the office cancels today's WFH request(s), so today isn't counted as a WFH day.
+    const wfhToday = home ? [] : [...(S.reqs.get(S.me) || [])].filter(([id, r]) => r.type === 'wfh' && !r.cancelled && r.from <= t && t <= r.to
+      && ['approved', 'pending'].includes(reqStatus(S.me, id, r)) && !officeSet(r).has(t)).map(([id]) => id);
     guard(async () => {
       const at = Date.now();
       await S.db.doc(`people/${S.me}/attendance/${t}`).set({date: t, inAt: at, outAt: null, mode, sessions: [{in: at, out: null}]});
       if (lv) await markWorked(S.me, lv, t);
+      for (const id of wfhToday) await S.db.doc(`leave/${S.me}/requests/${id}`).update({office: firebase.firestore.FieldValue.arrayUnion(t)});
     }, lv ? "Checked in. Today's leave is cancelled and the day is back in your balance."
       : n > 1 ? `Checked in. This is your ${ordinal(n)} WFH day this week (team rule: 1).` : 'Checked in')
       .then(ok => { if (ok) captureLocation(t, 'in', mode); });
