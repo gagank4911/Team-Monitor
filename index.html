@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Team Desk</title>
+<script>/* Light / dark theme chosen by this person on this device; "auto" follows the device setting. */
+try { var th = localStorage.getItem('td-theme'); if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th; } catch (e) {}</script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -73,6 +75,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .brand h1::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--gold);margin-right:8px;vertical-align:1px}
 .brand .date{color:var(--muted);font-size:13px}
 .me{display:flex;align-items:center;gap:8px;font-weight:600;min-width:0}
+.theme-pick{width:auto;font-size:12.5px;padding:4px 8px}
 .me span.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px}
 .role{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
 .tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;margin:0 -4px}
@@ -255,6 +258,15 @@ a.chip.geo:hover{text-decoration:underline}
 .tcard .notes{font-size:12.5px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
 .tcard .meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted)}
 .tcard .acts{display:flex;gap:6px;flex-wrap:wrap}
+.tupd{border-top:1px dashed var(--line);padding-top:7px;display:flex;flex-direction:column;gap:6px;font-size:12.5px}
+.tupd .u{display:flex;flex-direction:column;gap:2px}
+.tupd .u .txt{white-space:pre-wrap;overflow-wrap:anywhere}
+.tupd .u .when{font-size:11.5px;color:var(--faint)}
+.tupd details summary{cursor:pointer;color:var(--muted);font-size:12px}
+.tupd details .u{margin-top:6px}
+.tupd-form{display:flex;flex-direction:column;gap:6px}
+.tupd-form .row{display:flex;gap:6px;flex-wrap:wrap}
+.tupd-form select{width:auto}
 .filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .filters select{width:auto}
 
@@ -306,6 +318,9 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
     <div class="brand-row">
       <div class="brand"><h1>Team Desk</h1><span class="date" id="today-date"></span></div>
       <div class="me" id="me-chip"></div>
+      <select class="theme-pick" id="theme-pick" aria-label="Colour theme" title="Colour theme">
+        <option value="auto">🖥 Auto</option><option value="light">☀ Light</option><option value="dark">🌙 Dark</option>
+      </select>
       <button class="btn small ghost" type="button" id="signout">Sign out</button>
     </div>
     <nav class="tabs" aria-label="Sections">
@@ -598,7 +613,7 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
               <label class="field"><span>Role</span><select id="add-role"><option value="member">Employee</option><option value="manager">Manager</option></select></label>
               <label class="field"><span>Birthday (optional)</span><input id="add-bd" placeholder="DD-MM, e.g. 05-03" inputmode="numeric" maxlength="5" autocomplete="off"></label>
             </div>
-            <div class="form-foot"><span class="muted">Managers can approve leave, assign tasks and change the team.</span><button class="btn primary" type="submit">Add teammate</button></div>
+            <div class="form-foot"><span class="muted">Managers can approve leave and change the team.</span><button class="btn primary" type="submit">Add teammate</button></div>
           </fieldset>
         </form>
         <div id="invite-status"></div>
@@ -628,7 +643,7 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
             <div class="form-foot"><span class="muted">Days under the expected hours are flagged in timesheets.</span><button class="btn primary" type="submit">Save settings</button></div>
           </fieldset>
         </form>
-        <div class="note" style="margin-top:14px">Team members and managers are set in <b>config.js</b> and <b>firestore.rules</b>. Members can check in, request leave and update their own tasks, and see the team calendar (who is on leave or working from home) but only their own check-in locations. Managers can see everyone's check-in locations, approve leave, assign tasks to anyone, plan team bonding and change these settings.</div>
+        <div class="note" style="margin-top:14px">Team members and managers are set in <b>config.js</b> and <b>firestore.rules</b>. Members can check in, request leave, assign tasks to anyone and update their own tasks, and see the team calendar (who is on leave or working from home) but only their own check-in locations. Managers can see everyone's check-in locations, approve leave, assign tasks to anyone, plan team bonding and change these settings.</div>
       </div>
     </div>
   </section>
@@ -1520,9 +1535,9 @@ function renderTasks() {
   fsel.value = S.taskFilter;
   // assignee select
   const wsel = $('#tk-who');
-  const wopts = (S.admin ? ppl : [S.me]).map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
+  const wopts = ppl.map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
   if (wsel._h !== wopts) { const v = wsel.value; wsel.innerHTML = wopts; wsel._h = wopts; if ([...wsel.options].some(o => o.value === v)) wsel.value = v; }
-  $('#task-hint').textContent = S.admin ? 'You can assign tasks to anyone on the team.' : 'You can add tasks for yourself. Your manager assigns the rest.';
+  $('#task-hint').textContent = 'You can assign tasks to anyone on the team.';
 
   let list = allTasks();
   if (S.taskFilter === 'mine') list = list.filter(x => x.uid === S.me);
@@ -1538,10 +1553,20 @@ function renderTasks() {
       ${items.map(x => taskCard(x, showWho)).join('') || `<div class="empty" style="padding:8px 4px">${k === 'todo' ? 'Nothing to do here.' : k === 'doing' ? 'Nothing in progress.' : 'Nothing finished yet.'}</div>`}
       ${extra ? `<div class="faint" style="padding:0 4px">${extra} older finished task${extra > 1 ? 's' : ''} hidden</div>` : ''}</div>`;
   }).join(''));
+  const dr = S.updDraft || {};
+  $$('[data-updnote]').forEach(el => { const d = dr[el.dataset.updnote]; if (d && !el.value) el.value = d.text || ''; });
+  $$('[data-updhealth]').forEach(el => { const d = dr[el.dataset.updhealth]; if (d && d.health) el.value = d.health; });
 }
+document.addEventListener('input', e => {
+  const k = e.target.dataset && (e.target.dataset.updnote || e.target.dataset.updhealth);
+  if (!k) return;
+  S.updDraft = S.updDraft || {};
+  const d = S.updDraft[k] = S.updDraft[k] || {};
+  if (e.target.dataset.updnote) d.text = e.target.value; else d.health = e.target.value;
+});
 function taskCard(x, showWho) {
   const mayEdit = S.admin || x.uid === S.me;
-  const mayDel = S.admin || (x.uid === S.me && x.createdBy === S.me);
+  const mayDel = S.admin || x.createdBy === S.me; // whoever gave the task can delete it
   const st = x.status || 'todo';
   const moves = !mayEdit ? '' : st === 'todo' ? btn('task-status', 'Start', x, 'doing') + btn('task-status', 'Done', x, 'done')
     : st === 'doing' ? btn('task-status', 'Back to to-do', x, 'todo') + btn('task-status', 'Done', x, 'done')
@@ -1552,8 +1577,30 @@ function taskCard(x, showWho) {
     <div class="title">${esc(x.title)}</div>
     ${x.notes ? `<div class="notes">${esc(x.notes)}</div>` : ''}
     <div class="meta">${st !== 'done' ? dueChip(x) : `<span>Done ${x.doneAt ? esc(fmtShort(dkey(new Date(x.doneAt)))) : ''}</span>`}${x.priority === 'high' ? '<span class="chip danger nodot">High</span>' : x.priority === 'low' ? '<span class="chip nodot">Low</span>' : ''}${by}</div>
-    ${mayEdit || mayDel ? `<div class="acts">${moves}${mayDel ? btn('task-del', 'Delete', x, null, 'small ghost') : ''}</div>` : ''}
+    ${taskUpdates(x, st, mayEdit)}
+    ${mayEdit || mayDel ? `<div class="acts">${moves}${st === 'doing' && mayEdit && S.updOpen !== x.uid + '/' + x.id ? btn('upd-open', 'Add update', x, null, 'small primary') : ''}${mayDel ? btn('task-del', 'Delete', x, null, 'small ghost') : ''}</div>` : ''}
   </div>`;
+}
+/* Daily updates on a task in progress: a note plus how it is going. Stored on the task as
+   updates: [{at, by, health, text}]. */
+const HEALTH = {ok: ['On track', 'office'], risk: ['At risk', 'leave'], blocked: ['Blocked', 'danger']};
+const healthChip = h => HEALTH[h] ? `<span class="chip ${HEALTH[h][1]} nodot">${HEALTH[h][0]}</span>` : '';
+function taskUpdates(x, st, mayEdit) {
+  const ups = (Array.isArray(x.updates) ? x.updates : []).slice().sort((a, b) => (a.at || 0) - (b.at || 0));
+  const key = x.uid + '/' + x.id;
+  const one = u => `<div class="u"><div>${healthChip(u.health)} <span class="txt">${esc(u.text || '')}</span></div>
+    <span class="when">${esc(first(u.by))} · ${esc(fmtShort(dkey(new Date(u.at))))} ${esc(fmtTime(u.at))}</span></div>`;
+  const last = ups[ups.length - 1], older = ups.slice(0, -1).reverse();
+  const today = last && dkey(new Date(last.at)) === todayKey();
+  let html = '';
+  if (last) html += `<div class="faint" style="font-size:11.5px">Latest update</div>${one(last)}`;
+  if (older.length) html += `<details><summary>${older.length} earlier update${older.length > 1 ? 's' : ''}</summary>${older.map(one).join('')}</details>`;
+  if (st === 'doing' && !today) html += `<div><span class="chip nodot">No update today</span></div>`;
+  if (st === 'doing' && mayEdit && S.updOpen === key) html += `<div class="tupd-form">
+      <textarea rows="2" maxlength="500" data-updnote="${esc(key)}" placeholder="What did you do today? What's next?" aria-label="Update note"></textarea>
+      <div class="row"><select data-updhealth="${esc(key)}" aria-label="How is it going"><option value="ok">On track</option><option value="risk">At risk</option><option value="blocked">Blocked</option></select>
+      ${btn('upd-save', 'Post update', x, null, 'small primary')}${btn('upd-cancel', 'Cancel', x, null, 'small ghost')}</div></div>`;
+  return html ? `<div class="tupd">${html}</div>` : '';
 }
 
 function monthDays(m) {
@@ -1769,7 +1816,7 @@ function updateForms() {
     const eopts = people().map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
     if (esel._h !== eopts) { const v = esel.value; esel.innerHTML = eopts; esel._h = eopts; if ([...esel.options].some(o => o.value === v)) esel.value = v; }
   }
-  $('#tk-who').disabled = !on || !S.admin;
+  $('#tk-who').disabled = !on;
   $$('[data-type]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === S.applyType)));
   $('#cat-field').hidden = S.applyType !== 'leave';
   $('#ap-reg-fields').hidden = S.applyType !== 'reg';
@@ -2079,6 +2126,17 @@ document.addEventListener('click', e => {
       .then(() => S.tsCache.delete(uid + '|' + k.slice(0, 7))),
       status === 'approved' ? `${fmtShort(k)} regularized for ${first(uid)}` : 'Regularization declined');
   }
+  else if (act === 'upd-open') { S.updOpen = uid + '/' + id; renderAll(); const f = document.querySelector(`[data-updnote="${CSS.escape(uid + '/' + id)}"]`); if (f) f.focus(); }
+  else if (act === 'upd-cancel') { S.updOpen = null; renderAll(); }
+  else if (act === 'upd-save') {
+    const key = uid + '/' + id;
+    const text = (document.querySelector(`[data-updnote="${CSS.escape(key)}"]`)?.value || '').trim().slice(0, 500);
+    const health = document.querySelector(`[data-updhealth="${CSS.escape(key)}"]`)?.value || 'ok';
+    if (!text) { toast('Write a short note about today.', true); return; }
+    const at = Date.now();
+    guard(() => tdoc(uid, id).update({updates: firebase.firestore.FieldValue.arrayUnion({at, by: S.me, health, text}), updatedAt: at}), 'Update posted')
+      .then(ok => { if (ok) { S.updOpen = null; if (S.updDraft) S.updDraft[key] = null; renderAll(); } });
+  }
   else if (act === 'task-status') guard(() => tdoc(uid, id).update({status, updatedAt: Date.now(), doneAt: status === 'done' ? Date.now() : null}), status === 'done' ? 'Marked done' : 'Task updated');
   else if (act === 'task-del' || act === 'remove' || act === 'req-cancel' || act === 'ev-del') {
     if (b.dataset.armed !== '1') {
@@ -2175,7 +2233,7 @@ $('#task-form').addEventListener('submit', async e => {
   if (!canAct()) return;
   const title = $('#tk-title').value.trim();
   if (!title) { toast('Write what the task is.', true); $('#tk-title').focus(); return; }
-  const whoId = S.admin ? $('#tk-who').value : S.me;
+  const whoId = $('#tk-who').value || S.me;
   if (!whoId) return;
   const ok = await guard(() => S.db.collection(`people/${whoId}/tasks`).add({
     title: title.slice(0, 140), notes: $('#tk-notes').value.trim().slice(0, 600), due: $('#tk-due').value || null,
@@ -2290,6 +2348,17 @@ $('#ts-month').addEventListener('change', e => { if (e.target.value) { S.ts.mont
 ['input', 'change'].forEach(ev => document.addEventListener(ev, e => { const k = e.target.dataset && e.target.dataset.regf; if (k && S.regForm) S.regForm[k] = e.target.value; }));
 $('#cal-prev').addEventListener('click', () => { const d = pkey(S.calMonth + '-01'); d.setMonth(d.getMonth() - 1); S.calMonth = mkey(d); renderAll(); });
 $('#cal-next').addEventListener('click', () => { const d = pkey(S.calMonth + '-01'); d.setMonth(d.getMonth() + 1); S.calMonth = mkey(d); renderAll(); });
+/* Theme picker: Auto follows the device; Light / Dark are remembered on this device. */
+(() => {
+  const pick = $('#theme-pick');
+  let cur = 'auto'; try { cur = localStorage.getItem('td-theme') || 'auto'; } catch (e) {}
+  pick.value = ['light', 'dark'].includes(cur) ? cur : 'auto';
+  pick.addEventListener('change', () => {
+    const v = pick.value;
+    if (v === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = v;
+    try { v === 'auto' ? localStorage.removeItem('td-theme') : localStorage.setItem('td-theme', v); } catch (e) {}
+  });
+})();
 $('#cal-today').addEventListener('click', () => { S.calMonth = mkey(new Date()); renderAll(); });
 $('#ts-csv').addEventListener('click', async () => {
   if (!S.dl) return;
