@@ -74,8 +74,14 @@ service cloud.firestore {
       match /tasks/{tid} {
         allow read: if isTeam();
         // Anyone on the team can give a task to anyone (marked as from them); the person who gave it can delete it.
-        allow create: if isAdmin() || (isMember() && request.resource.data.createdBy == myId());
-        allow update: if isAdmin() || isMe(pid);
+        // Extra work (outside the daily activities) waits for a manager: only managers set `approval`, and it
+        // can't be started (status changed) until a manager approves it.
+        allow create: if isAdmin() || (isMember() && request.resource.data.createdBy == myId()
+          && request.resource.data.get('approval', null) in [null, 'pending']);
+        allow update: if isAdmin() || (isMe(pid)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['extra', 'reqBy', 'approval', 'approvalBy', 'approvalAt'])
+          && (!resource.data.get('extra', false) || resource.data.get('approval', null) == 'approved'
+              || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])));
         allow delete: if isAdmin() || (isMember() && resource.data.createdBy == myId());
       }
     }

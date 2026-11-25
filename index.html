@@ -508,9 +508,15 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
             </label>
           </div>
           <label class="field"><span>Notes <em>(optional)</em></span><textarea id="tk-notes" rows="2" maxlength="600"></textarea></label>
-          <div class="form-foot"><span></span><button class="btn primary" type="submit">Add task</button></div>
+          <label class="check"><input type="checkbox" id="tk-extra"> Extra work: not part of the daily activities (e.g. asked by another department)</label>
+          <label class="field" id="tk-reqby-field" hidden><span>Requested by (department / person)</span><input id="tk-reqby" maxlength="80" placeholder="e.g. Finance team, Ravi"></label>
+          <div class="form-foot"><span class="muted" id="tk-extra-hint"></span><button class="btn primary" type="submit">Add task</button></div>
         </fieldset>
       </form>
+    </div>
+    <div class="card admin-only">
+      <div class="card-head"><h2>Extra work to approve</h2><span class="sub">Tasks outside the daily activities</span></div>
+      <div class="list" id="extra-appr"><div class="empty">Nothing waiting.</div></div>
     </div>
     <div class="card">
       <div class="card-head">
@@ -1364,13 +1370,15 @@ function renderToday() {
   // my tasks
   const mine = allTasks().filter(x => x.uid === S.me && x.status !== 'done').sort(taskSort).slice(0, 6);
   setHTML($('#my-tasks'), mine.length ? mine.map(x => `<div class="item"><div class="main"><div class="title">${esc(x.title)}</div><div class="meta">${dueChip(x)}${x.priority === 'high' ? '<span class="chip danger nodot">High</span>' : ''}${x.status === 'doing' ? '<span class="chip accent nodot">In progress</span>' : ''}</div></div>
-    <div class="acts">${x.status === 'todo' ? btn('task-status', 'Start', x, 'doing') : ''}${btn('task-status', 'Done', x, 'done')}</div></div>`).join('')
+    <div class="acts">${needsOk(x) ? `<span class="chip ${x.approval === 'declined' ? 'danger' : 'leave pending'} nodot">${x.approval === 'declined' ? 'Declined' : 'Waiting for approval'}</span>` : `${x.status === 'todo' ? btn('task-status', 'Start', x, 'doing') : ''}${btn('task-status', 'Done', x, 'done')}`}</div></div>`).join('')
     : `<div class="empty">No open tasks. New ones you're given will show up here.</div>`);
 
   // approvals mini
   if (S.admin) {
     const pend = [...allReqs().filter(r => r.status === 'pending'), ...pendingRegs()];
-    setHTML($('#appr-mini'), pend.length ? `${pend.length} request${pend.length > 1 ? 's' : ''} from ${[...new Set(pend.map(r => esc(first(r.uid))))].join(', ')}.` : 'Nothing pending.');
+    const xn = allTasks().filter(x => x.extra && x.approval === 'pending').length;
+    setHTML($('#appr-mini'), (pend.length ? `${pend.length} request${pend.length > 1 ? 's' : ''} from ${[...new Set(pend.map(r => esc(first(r.uid))))].join(', ')}.` : xn ? '' : 'Nothing pending.')
+      + (xn ? ` <a href="#tasks">${xn} extra-work task${xn > 1 ? 's' : ''} to approve.</a>` : ''));
   }
 
   // team today
@@ -1538,6 +1546,16 @@ function renderTasks() {
   const wopts = ppl.map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
   if (wsel._h !== wopts) { const v = wsel.value; wsel.innerHTML = wopts; wsel._h = wopts; if ([...wsel.options].some(o => o.value === v)) wsel.value = v; }
   $('#task-hint').textContent = 'You can assign tasks to anyone on the team.';
+  $('#tk-reqby-field').hidden = !$('#tk-extra').checked;
+  $('#tk-extra-hint').textContent = $('#tk-extra').checked && !S.admin ? 'A manager approves extra work before it can be started.' : '';
+  if (S.admin) {
+    const xp = allTasks().filter(x => x.extra && x.approval === 'pending').sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    setHTML($('#extra-appr'), xp.length ? xp.map(x => `<div class="item"><div class="main"><div class="title">${esc(x.title)}</div>
+      <div class="meta">${who(x.uid, 20)}${x.reqBy ? `<span>requested by ${esc(x.reqBy)}</span>` : ''}${x.createdBy && x.createdBy !== x.uid ? `<span>added by ${esc(first(x.createdBy))}</span>` : ''}${dueChip(x)}</div>
+      ${x.notes ? `<div class="faint" style="font-size:12.5px;white-space:pre-wrap">${esc(x.notes)}</div>` : ''}</div>
+      <div class="acts">${btn('xt-ok', 'Approve', x, 'approved', 'small primary')}${btn('xt-ok', 'Decline', x, 'declined', 'small ghost')}</div></div>`).join('')
+      : '<div class="empty">Nothing waiting.</div>');
+  }
 
   let list = allTasks();
   if (S.taskFilter === 'mine') list = list.filter(x => x.uid === S.me);
@@ -1568,7 +1586,8 @@ function taskCard(x, showWho) {
   const mayEdit = S.admin || x.uid === S.me;
   const mayDel = S.admin || x.createdBy === S.me; // whoever gave the task can delete it
   const st = x.status || 'todo';
-  const moves = !mayEdit ? '' : st === 'todo' ? btn('task-status', 'Start', x, 'doing') + btn('task-status', 'Done', x, 'done')
+  const blocked = needsOk(x); // extra work the manager hasn't approved: can't be started
+  const moves = !mayEdit || blocked ? '' : st === 'todo' ? btn('task-status', 'Start', x, 'doing') + btn('task-status', 'Done', x, 'done')
     : st === 'doing' ? btn('task-status', 'Back to to-do', x, 'todo') + btn('task-status', 'Done', x, 'done')
     : btn('task-status', 'Reopen', x, 'todo');
   const by = x.createdBy && x.createdBy !== x.uid ? `<span>from ${esc(first(x.createdBy))}</span>` : '';
@@ -1577,9 +1596,20 @@ function taskCard(x, showWho) {
     <div class="title">${esc(x.title)}</div>
     ${x.notes ? `<div class="notes">${esc(x.notes)}</div>` : ''}
     <div class="meta">${st !== 'done' ? dueChip(x) : `<span>Done ${x.doneAt ? esc(fmtShort(dkey(new Date(x.doneAt)))) : ''}</span>`}${x.priority === 'high' ? '<span class="chip danger nodot">High</span>' : x.priority === 'low' ? '<span class="chip nodot">Low</span>' : ''}${by}</div>
+    ${extraInfo(x)}
+    ${S.admin && x.extra && x.approval === 'pending' ? `<div class="acts">${btn('xt-ok', 'Approve', x, 'approved', 'small primary')}${btn('xt-ok', 'Decline', x, 'declined', 'small ghost')}</div>` : ''}
     ${taskUpdates(x, st, mayEdit)}
     ${mayEdit || mayDel ? `<div class="acts">${moves}${st === 'doing' && mayEdit && S.updOpen !== x.uid + '/' + x.id ? btn('upd-open', 'Add update', x, null, 'small primary') : ''}${mayDel ? btn('task-del', 'Delete', x, null, 'small ghost') : ''}</div>` : ''}
   </div>`;
+}
+/* Extra work: a task outside the daily activities (e.g. asked by another department). The manager decides if it
+   can be done: approval = 'pending' | 'approved' | 'declined'. Until approved it can't be started. */
+const needsOk = x => !!x.extra && x.approval !== 'approved';
+function extraInfo(x) {
+  if (!x.extra) return '';
+  const st = x.approval === 'approved' ? '<span class="chip office nodot">Approved</span>' : x.approval === 'declined' ? '<span class="chip danger nodot">Declined</span>' : '<span class="chip leave pending nodot">Waiting for manager approval</span>';
+  const who = x.approvalBy ? ` by ${esc(first(x.approvalBy))}` : '';
+  return `<div class="meta"><span class="chip accent nodot">Extra work</span>${x.reqBy ? `<span>requested by ${esc(x.reqBy)}</span>` : ''}${st}${x.approval === 'approved' || x.approval === 'declined' ? `<span>${who}</span>` : ''}</div>`;
 }
 /* Daily updates on a task in progress: a note plus how it is going. Stored on the task as
    updates: [{at, by, health, text}]. */
@@ -2126,6 +2156,11 @@ document.addEventListener('click', e => {
       .then(() => S.tsCache.delete(uid + '|' + k.slice(0, 7))),
       status === 'approved' ? `${fmtShort(k)} regularized for ${first(uid)}` : 'Regularization declined');
   }
+  else if (act === 'xt-ok') {
+    if (!S.admin) return;
+    guard(() => tdoc(uid, id).update({approval: status === 'approved' ? 'approved' : 'declined', approvalBy: S.me, approvalAt: Date.now(), updatedAt: Date.now()}),
+      status === 'approved' ? 'Extra work approved' : 'Extra work declined');
+  }
   else if (act === 'upd-open') { S.updOpen = uid + '/' + id; renderAll(); const f = document.querySelector(`[data-updnote="${CSS.escape(uid + '/' + id)}"]`); if (f) f.focus(); }
   else if (act === 'upd-cancel') { S.updOpen = null; renderAll(); }
   else if (act === 'upd-save') {
@@ -2228,6 +2263,7 @@ $('#apply-form').addEventListener('submit', async e => {
   }, clashes.length ? 'Request sent. It is flagged because others are already away that day.' : 'Request sent for approval');
   if (ok) { $('#ap-reason').value = ''; $('#ap-half').checked = false; }
 });
+$('#tk-extra').addEventListener('change', () => renderAll());
 $('#task-form').addEventListener('submit', async e => {
   e.preventDefault();
   if (!canAct()) return;
@@ -2235,11 +2271,16 @@ $('#task-form').addEventListener('submit', async e => {
   if (!title) { toast('Write what the task is.', true); $('#tk-title').focus(); return; }
   const whoId = $('#tk-who').value || S.me;
   if (!whoId) return;
+  const extra = $('#tk-extra').checked, reqBy = $('#tk-reqby').value.trim().slice(0, 80);
+  if (extra && !reqBy) { toast('Say which department or person asked for this extra work.', true); $('#tk-reqby').focus(); return; }
+  const now = Date.now();
+  // Extra work added by a manager is approved straight away; from anyone else it waits for a manager.
+  const xf = extra ? {extra: true, reqBy, approval: S.admin ? 'approved' : 'pending', approvalBy: S.admin ? S.me : null, approvalAt: S.admin ? now : null} : {};
   const ok = await guard(() => S.db.collection(`people/${whoId}/tasks`).add({
     title: title.slice(0, 140), notes: $('#tk-notes').value.trim().slice(0, 600), due: $('#tk-due').value || null,
-    priority: $('#tk-pri').value, status: 'todo', createdBy: S.me, createdAt: Date.now(), updatedAt: Date.now()
-  }), whoId === S.me ? 'Task added' : `Task assigned to ${first(whoId)}`);
-  if (ok) { $('#tk-title').value = ''; $('#tk-notes').value = ''; $('#tk-due').value = ''; $('#tk-pri').value = 'normal'; }
+    priority: $('#tk-pri').value, status: 'todo', createdBy: S.me, createdAt: now, updatedAt: now, ...xf
+  }), extra && !S.admin ? 'Extra work added. It can be started once a manager approves it.' : whoId === S.me ? 'Task added' : `Task assigned to ${first(whoId)}`);
+  if (ok) { $('#tk-title').value = ''; $('#tk-notes').value = ''; $('#tk-due').value = ''; $('#tk-pri').value = 'normal'; $('#tk-extra').checked = false; $('#tk-reqby').value = ''; renderAll(); }
 });
 $('#settings-form').addEventListener('submit', e => {
   e.preventDefault();
