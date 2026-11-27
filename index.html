@@ -309,6 +309,21 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
 .cyc .what{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
 .checks{display:flex;flex-wrap:wrap;gap:6px 14px}
 .rota.short{color:var(--danger)}
+/* notifications */
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.notif{position:relative}
+.bell{position:relative;font-size:15px;padding:4px 8px}
+.bell .nc{position:absolute;top:-5px;right:-5px;min-width:17px;padding:0 4px;border-radius:999px;background:var(--danger);color:#fff;font-size:10.5px;font-weight:700;line-height:17px;text-align:center}
+.notif-panel{position:fixed;z-index:15;width:min(380px,calc(100vw - 32px));max-height:min(70vh,560px);overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+.nitem{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:10px 6px;cursor:pointer;border-radius:8px}
+.nitem:first-child{border-top:0}
+.nitem:hover{background:var(--sunk)}
+.nitem.unread{background:var(--accent-soft)}
+.nitem .nmain{min-width:0;display:flex;flex-direction:column;gap:2px;flex:1}
+.nitem .ntitle{font-weight:600;overflow-wrap:anywhere}
+.nitem .nsub{color:var(--muted);font-size:12.5px;overflow-wrap:anywhere}
+.nitem .ntime{color:var(--faint);font-size:12px;white-space:nowrap}
+.notif-foot{border-top:1px solid var(--line);margin-top:6px;padding-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
 </style>
 </head>
 <body class="signed-out">
@@ -318,6 +333,14 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
     <div class="brand-row">
       <div class="brand"><h1>Team Desk</h1><span class="date" id="today-date"></span></div>
       <div class="me" id="me-chip"></div>
+      <div class="notif" id="notif">
+        <button class="btn small ghost bell" type="button" id="notif-btn" aria-haspopup="true" aria-expanded="false" aria-controls="notif-panel" title="Notifications">🔔<span class="sr">Notifications</span><span class="nc" id="notif-count" hidden></span></button>
+        <div class="notif-panel" id="notif-panel" role="dialog" aria-label="Notifications" hidden>
+          <div class="card-head" style="margin-bottom:6px"><h2>Notifications</h2><button class="btn small ghost" type="button" data-nact="close">Close</button></div>
+          <div id="notif-list"></div>
+          <div class="notif-foot" id="notif-foot"></div>
+        </div>
+      </div>
       <select class="theme-pick" id="theme-pick" aria-label="Colour theme" title="Colour theme">
         <option value="auto">🖥 Auto</option><option value="light">☀ Light</option><option value="dark">🌙 Dark</option>
       </select>
@@ -877,6 +900,7 @@ const S = {
   calMonth: mkey(new Date()), taskFilter: 'mine',
   ts: {person: null, month: mkey(new Date())}, tsCache: new Map(), tsLoading: new Set(), regForm: null, geo: new Map(),
   busy: false,
+  bootAt: Date.now(), notifKnown: null, notifOpen: false, notifPrevSeen: 0,
 };
 
 /* ---------- helpers ---------- */
@@ -1291,8 +1315,133 @@ function renderAll() { if (rq) return; rq = true; setTimeout(() => { rq = false;
 function doRender() {
   computeClash();
   renderHeader(); renderBanner(); renderCalendar(); renderToday(); renderLeave(); renderTasks(); renderTimesheet(); renderTeam(); renderStats(); renderBonding();
-  updateForms(); refreshNames();
+  updateForms(); refreshNames(); renderNotifs();
 }
+
+/* ---------- notifications ----------
+   Built from data everyone already receives live, so nothing extra is stored except when you last looked.
+   Managers: new leave / WFH requests from the team. Everyone: tasks someone else gave you, and decisions on
+   your own leave / WFH requests. A desktop alert pops up for anything new while Team Desk is open in a tab. */
+const NOTIF_DAYS = 30;
+const notifKey = () => 'td-notif-seen-' + S.me;
+function notifSeen() {
+  let ls = 0; try { ls = Number(localStorage.getItem(notifKey())) || 0; } catch (e) {}
+  const v = Math.max(ls, Number(S.roster.get(S.me)?.notifSeen) || 0);
+  return v || S.bootAt - 3 * DAY; // first visit: the last 3 days count as new
+}
+function setNotifSeen(t) {
+  try { localStorage.setItem(notifKey(), String(t)); } catch (e) {}
+  // Also saved on your own board entry, so other devices know what you've seen.
+  if (S.roster.has(S.me) && !S.ro) S.db.doc('people/' + S.me).set({notifSeen: t}, {merge: true}).catch(() => {});
+}
+const reqWhat = r => r.type === 'wfh' ? 'work from home' : ((CAT[r.category] ? CAT[r.category].toLowerCase() + ' ' : '') + 'leave');
+const reqWhen = r => fmtShort(r.from) + (r.to && r.to !== r.from ? ' – ' + fmtShort(r.to) : '') + (r.half ? ' (half day)' : '');
+function notifList() {
+  if (!ready() || !S.me) return [];
+  const out = [], since = Date.now() - NOTIF_DAYS * DAY;
+  if (S.admin) for (const r of allReqs()) {
+    // entries a manager added directly are already approved: nothing to notify
+    if (r.uid === S.me || r.cancelled || r.addedBy || !(r.createdAt > since)) continue;
+    out.push({key: `req:${r.uid}/${r.id}`, at: r.createdAt, who: r.uid, href: '#leave',
+      title: `${nm(r.uid)} applied for ${reqWhat(r)}`,
+      sub: `${reqWhen(r)} · ${r.status === 'pending' ? 'waiting for your approval' : r.status === 'approved' ? 'approved' : 'declined'}${r.reason ? ` · “${r.reason}”` : ''}`});
+  }
+  for (const x of allTasks()) {
+    if (x.uid !== S.me || !x.createdBy || x.createdBy === S.me || !(x.createdAt > since)) continue;
+    out.push({key: `task:${x.id}`, at: x.createdAt, who: x.createdBy, href: '#tasks', task: true,
+      title: `${nm(x.createdBy)} gave you a task`,
+      sub: x.title + (x.due ? ` · due ${fmtShort(x.due)}` : '') + (x.priority === 'high' ? ' · high priority' : '')});
+  }
+  for (const [id, a] of S.appr.get(S.me) || []) {
+    const r = S.reqs.get(S.me)?.get(id);
+    if (!r || r.cancelled || a.by === S.me || !(a.at > since) || reqStatus(S.me, id, r) !== a.decision) continue;
+    out.push({key: `dec:${id}:${a.decision}`, at: a.at, who: a.by, href: '#leave',
+      title: `Your ${reqWhat(r)} was ${a.decision === 'approved' ? 'approved' : 'declined'}`,
+      sub: `${reqWhen(r)} · by ${nm(a.by)}`});
+  }
+  return out.sort((a, b) => b.at - a.at).slice(0, 40);
+}
+function ago(ms) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60); if (h < 24) return h + ' h ago';
+  const d = Math.round(h / 24); return d === 1 ? 'yesterday' : d + ' days ago';
+}
+const baseTitle = document.title;
+function renderNotifs() {
+  const list = notifList();
+  if (!ready()) return;
+  // Desktop alert / toast for things that arrived after the page was opened
+  if (!S.notifKnown) S.notifKnown = new Set(list.map(n => n.key));
+  else {
+    const fresh = list.filter(n => !S.notifKnown.has(n.key) && n.at > S.bootAt - 60000);
+    list.forEach(n => S.notifKnown.add(n.key));
+    if (fresh.length) alertNotifs(fresh);
+  }
+  const seen = S.notifOpen ? S.notifPrevSeen : notifSeen();
+  const unread = list.filter(n => n.at > seen).length;
+  const nc = $('#notif-count'); nc.hidden = !unread || S.notifOpen; nc.textContent = unread > 9 ? '9+' : unread;
+  $('#notif-btn').title = unread ? `${unread} new notification${unread > 1 ? 's' : ''}` : 'Notifications';
+  document.title = (unread && !S.notifOpen ? `(${unread}) ` : '') + baseTitle;
+  setHTML($('#notif-list'), list.length ? list.map(n => `<button type="button" class="nitem ${n.at > seen ? 'unread' : ''}" data-nact="go" data-href="${esc(n.href)}" ${n.task ? 'data-task="1"' : ''}>
+    ${avatar(n.who, 28)}<span class="nmain"><span class="ntitle">${esc(n.title)}</span><span class="nsub">${esc(n.sub)}</span></span><span class="ntime">${esc(ago(n.at))}</span></button>`).join('')
+    : `<div class="empty">Nothing new. ${S.admin ? 'Leave and WFH requests from the team, ' : ''}${S.admin ? 'tasks' : 'Tasks'} people give you${S.admin ? '' : ' and answers to your leave or WFH requests'} show up here.</div>`);
+  const p = 'Notification' in window ? Notification.permission : 'unsupported';
+  setHTML($('#notif-foot'), p === 'default' ? `<span>Get a pop-up on your computer when something new comes in.</span><button class="btn small primary" type="button" data-nact="perm">Turn on desktop alerts</button>`
+    : p === 'granted' ? '<span>Desktop alerts are on while Team Desk is open in a browser tab.</span>'
+    : p === 'denied' ? '<span>Desktop alerts are blocked. Allow notifications for this site in your browser settings to get them.</span>'
+    : '<span>This browser can’t show desktop alerts.</span>');
+}
+function alertNotifs(fresh) {
+  const n = fresh[0];
+  if (!document.hidden) toast(fresh.length > 1 ? `${n.title} (+${fresh.length - 1} more)` : n.title);
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (!document.hidden && document.hasFocus()) return; // the toast is enough when you're looking at the page
+  for (const f of fresh.slice(0, 3)) {
+    try {
+      const d = new Notification(f.title, {body: f.sub, tag: f.key});
+      d.onclick = () => { window.focus(); openFromNotif(f.href, f.task); d.close(); };
+    } catch (e) {}
+  }
+}
+function openFromNotif(href, task) {
+  if (task) S.taskFilter = 'mine';
+  location.hash = href;
+  closeNotifs();
+  renderAll();
+}
+function placeNotifs() {
+  const r = $('#notif-btn').getBoundingClientRect(), p = $('#notif-panel');
+  p.style.top = Math.round(r.bottom + 6) + 'px';
+  p.style.right = Math.max(16, Math.round(window.innerWidth - r.right)) + 'px';
+}
+function openNotifs() {
+  S.notifOpen = true; S.notifPrevSeen = notifSeen();
+  const latest = Math.max(Date.now(), ...notifList().map(n => n.at));
+  setNotifSeen(latest);
+  $('#notif-panel').hidden = false; $('#notif-btn').setAttribute('aria-expanded', 'true');
+  placeNotifs(); renderNotifs();
+}
+function closeNotifs() {
+  if (!S.notifOpen) return;
+  S.notifOpen = false;
+  $('#notif-panel').hidden = true; $('#notif-btn').setAttribute('aria-expanded', 'false');
+  renderNotifs();
+}
+$('#notif-btn').addEventListener('click', () => S.notifOpen ? closeNotifs() : openNotifs());
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-nact]');
+  if (b) {
+    const a = b.dataset.nact;
+    if (a === 'close') closeNotifs();
+    else if (a === 'go') openFromNotif(b.dataset.href, !!b.dataset.task);
+    else if (a === 'perm' && 'Notification' in window) Notification.requestPermission().then(() => renderNotifs()).catch(() => {});
+    return;
+  }
+  if (S.notifOpen && !e.target.closest('#notif')) closeNotifs();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.notifOpen) { closeNotifs(); $('#notif-btn').focus(); } });
+window.addEventListener('resize', () => { if (S.notifOpen) placeNotifs(); });
 function renderHeader() {
   $('#today-date').textContent = new Date().toLocaleDateString([], {weekday: 'long', day: 'numeric', month: 'long'});
   setHTML($('#me-chip'), S.me ? `${avatar(S.me, 26)}<span class="nm">${nameHTML(S.me)}</span><span class="role">${TD.roleOf[S.me] === 'owner' ? 'Admin' : S.admin ? 'Manager' : 'Employee'}</span>` : '');

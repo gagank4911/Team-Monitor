@@ -15,6 +15,15 @@ Attendance, leave/WFH, tasks, timesheets, stats and team bonding for the team. I
 | Team bonding | Everyone (managers edit) | One activity per two-month cycle, done / planned / missed |
 | Stats | Managers | Tasks, hours, extra hours, office % per person |
 
+### Notifications
+
+The 🔔 button in the top bar shows a red count of new items:
+
+- **Managers:** every new leave or WFH request from the team.
+- **Everyone:** tasks someone else gives you, and approvals or declines of your own leave or WFH requests.
+
+Press **Turn on desktop alerts** in the panel to get a pop-up on your computer when something new comes in. Pop-ups only work while Team Desk is open in a browser tab. Alerts with the site closed would need Firebase Cloud Messaging and Cloud Functions, which the free Spark plan doesn't include.
+
 ### Team rules built in
 
 - **Hours:** expected 8 hours a day (10:00–18:00), set in Team settings. Time past that, or any time on a day off, counts as **extra hours**. After checking out with extra time, people describe what they worked on.
