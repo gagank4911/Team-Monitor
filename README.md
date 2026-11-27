@@ -13,6 +13,7 @@ Attendance, leave/WFH, tasks, timesheets, stats and team bonding for the team. I
 | Timesheet | Everyone (managers: anyone's) | Daily check-in/out, hours, extra hours, overtime work, CSV download |
 | Team | Everyone | Team overview; managers set Saturday groups, display names and settings |
 | Team bonding | Everyone (managers edit) | One activity per two-month cycle, done / planned / missed |
+| Docker images | Everyone (managers edit) | Images in the private registry: each repo's versions with tags, digest, commit note, push date and who pushed. Managers can paste the team sheet to import it |
 | Stats | Managers | Tasks, hours, extra hours, office % per person |
 
 ### Notifications
@@ -42,6 +43,7 @@ Press **Turn on desktop alerts** in the panel to get a pop-up on your computer w
 | Approve / decline requests | — | ✓ |
 | Tasks | Update their own; add tasks for themselves | Assign to anyone, edit any |
 | Saturday groups, settings, team bonding | — (can view) | ✓ |
+| Docker images list (and pushing to the private registry) | — (can view) | ✓ |
 
 These rules are enforced by the database (`firestore.rules`), not only by the page.
 
@@ -100,6 +102,7 @@ The first time a manager signs in, everyone in `config.js` is added to the board
 | `holds/<id>` | Anonymous "someone is away" markers for the daily limit |
 | `settings/team` | Leave allowance, hours, max away per day, Saturday groups, display names |
 | `events/<id>` | Team bonding activities |
+| `images/<repo>` | One per repo (`/` in the name stored as `~`): `name`, `uri`, `versions` (newest first: `k`, `digest`, `tags`, `note`, `pushedAt`, `pushedBy`), `updatedBy`, `updatedAt` |
 
 Browse or export everything in Firebase console > Firestore Database > Data.
 

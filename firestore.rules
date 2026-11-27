@@ -118,5 +118,12 @@ service cloud.firestore {
       allow read: if isTeam();
       allow write: if isAdmin();
     }
+
+    // Docker images in the private registry: everyone on the team can see the list;
+    // only managers (the only people who push images) can add, update or delete entries.
+    match /images/{iid} {
+      allow read: if isTeam();
+      allow write: if isAdmin();
+    }
   }
 }

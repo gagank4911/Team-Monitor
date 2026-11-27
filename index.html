@@ -292,6 +292,9 @@ tr.short td.num.hrs{color:var(--leave)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{background:var(--danger);color:#fff}
 @media (prefers-reduced-motion:reduce){.toast{transition:none}}
+tr.img-editing td{background:color-mix(in srgb,var(--fg) 7%,transparent)}
+tr.img-repo td{background:color-mix(in srgb,var(--fg) 4%,transparent);border-top:2px solid var(--line)}
+.img-chip{cursor:pointer;margin:0 4px 4px 0}
 /* sign-in, bonding, extra columns */
 [hidden]{display:none!important}
 .cyc .chip{align-self:flex-start}
@@ -354,6 +357,7 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
       <a href="#timesheet" data-view="timesheet">Timesheet</a>
       <a href="#team" data-view="team">Team</a>
       <a href="#bonding" data-view="bonding">Team bonding</a>
+      <a href="#images" data-view="images">Docker images</a>
       <a href="#stats" data-view="stats" class="admin-only">Stats</a>
     </nav>
   </div>
@@ -598,6 +602,50 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
       <div class="card">
         <div class="card-head"><h2>All activities</h2></div>
         <div class="list" id="ev-list"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DOCKER IMAGES: everyone sees the list; only managers push to the private registry and edit it -->
+  <section class="view" id="view-images" hidden>
+    <div class="card">
+      <div class="card-head">
+        <h2 id="img-title">Docker images</h2>
+        <div class="filters"><input type="search" id="img-q" placeholder="Search repo, tag, digest, commit" aria-label="Search images" style="width:240px"></div>
+      </div>
+      <div id="img-note" style="margin-bottom:12px"></div>
+      <div class="table-wrap" id="img-table"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="grid even">
+      <div class="card admin-only">
+        <div class="card-head"><h2 id="img-form-title">Add a version</h2></div>
+        <form id="img-form" novalidate>
+          <fieldset class="fs" id="img-fs">
+            <div class="row2">
+              <label class="field"><span>Repo</span><input id="img-repo" list="img-repos" maxlength="200" placeholder="e.g. bi/rnaseq" autocomplete="off" required></label>
+              <label class="field"><span>Image URI <em>(new repos)</em></span><input id="img-uri" maxlength="300" placeholder="123456789012.dkr.ecr.ap-south-1.amazonaws.com/bi/rnaseq"></label>
+            </div>
+            <datalist id="img-repos"></datalist>
+            <div class="row2">
+              <label class="field"><span>Tags</span><input id="img-tags" maxlength="300" placeholder="e.g. 2.1, v2.1, latest" required></label>
+              <label class="field"><span>Digest <em>(optional)</em></span><input id="img-digest" maxlength="80" placeholder="sha256:…" class="mono" spellcheck="false"></label>
+            </div>
+            <label class="field"><span>Commit / what changed <em>(optional)</em></span><input id="img-note" maxlength="300" placeholder="e.g. Fixed fusion file merge issue in single cell"></label>
+            <div class="row2">
+              <label class="field"><span>Pushed on</span><input type="date" id="img-date"></label>
+              <label class="field"><span>Pushed by</span><select id="img-by"></select></label>
+            </div>
+            <div class="form-foot"><button class="btn ghost" type="button" id="img-cancel" hidden>Cancel edit</button><span class="muted">A tag moves to the new digest, as it does in the registry.</span><button class="btn primary" type="submit" id="img-submit">Add version</button></div>
+          </fieldset>
+        </form>
+      </div>
+      <div class="card admin-only">
+        <div class="card-head"><h2>Import from a sheet</h2></div>
+        <fieldset class="fs" id="imp-fs">
+          <p class="muted" style="margin:0 0 8px">Select the rows in your sheet (Repo Name, Docker Image Name, Versions, Commit), copy, and paste here. Output of <span class="mono">aws ecr list-images</span> works too, with the repo name on the line above it. Importing adds and updates; it never deletes.</p>
+          <textarea id="imp-text" rows="8" class="mono" spellcheck="false" placeholder="Paste here" style="font-size:12px"></textarea>
+          <div class="form-foot"><span class="muted" id="imp-sum"></span><button class="btn primary" type="button" id="imp-go" disabled>Import</button></div>
+        </fieldset>
       </div>
     </div>
   </section>
@@ -894,6 +942,7 @@ const S = {
   invites: null, inviteRunning: false, inviteDone: false,
   settings: {allowance: 34, carryMax: 10, hours: 8, maxAway: 2},
   events: new Map(), bdYear: new Date().getFullYear(),
+  images: new Map(), imgEdit: null, imgQ: '', imgParsed: [],
   names: {}, nameSig: '',
   subs: new Map(), registering: false,
   view: 'today', mode: null, applyType: 'leave',
@@ -1314,7 +1363,7 @@ let rq = false;
 function renderAll() { if (rq) return; rq = true; setTimeout(() => { rq = false; doRender(); }, 20); }
 function doRender() {
   computeClash();
-  renderHeader(); renderBanner(); renderCalendar(); renderToday(); renderLeave(); renderTasks(); renderTimesheet(); renderTeam(); renderStats(); renderBonding();
+  renderHeader(); renderBanner(); renderCalendar(); renderToday(); renderLeave(); renderTasks(); renderTimesheet(); renderTeam(); renderStats(); renderBonding(); renderImages();
   updateForms(); refreshNames(); renderNotifs();
 }
 
@@ -1987,6 +2036,136 @@ function renderBonding() {
     : '<div class="empty">No activities yet.</div>');
   if (S.admin) setHTML($('#ev-who'), people().map(id => `<label class="check"><input type="checkbox" value="${esc(id)}" checked> ${esc(nm(id))}</label>`).join(''));
 }
+/* Docker images: images/<repo id> = {name, uri, versions: [{k, digest, tags[], note, pushedAt, pushedBy}]}, newest version first */
+const IMG_NAME_RE = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*$/;
+const IMG_TAG_RE = /^\w[\w.-]{0,127}$/;
+const IMG_HOST_RE = /^[\w-]+(\.[\w-]+)+(:\d+)?\/\S+$/;
+const imgId = name => name.replace(/\//g, '~');
+const imgKey = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const imgRepos = () => [...S.images].map(([id, x]) => ({id, ...x})).filter(x => typeof x.name === 'string' && Array.isArray(x.versions)).sort((a, b) => a.name.localeCompare(b.name));
+// Add a version to a repo's list (or replace the one with key `replaceKey`). The same digest is one version, so its tags
+// are combined. A tag can point to only one image, so tags on this version are taken off every other version.
+function mergeVersion(versions, v, replaceKey, append) {
+  const out = versions.map(x => ({...x, tags: [...(x.tags || [])]}));
+  let hit = replaceKey ? out.find(x => x.k === replaceKey) : v.digest ? out.find(x => x.digest === v.digest) : null;
+  if (hit && replaceKey) Object.assign(hit, v, {k: hit.k});
+  else if (hit) {
+    hit.tags = [...new Set([...hit.tags, ...v.tags])];
+    if (v.note && !String(hit.note || '').toLowerCase().includes(v.note.toLowerCase())) hit.note = (hit.note ? hit.note + '; ' + v.note : v.note).slice(0, 600);
+    for (const f of ['pushedAt', 'pushedBy']) if (v[f] && !hit[f]) hit[f] = v[f];
+  } else { hit = {...v, k: imgKey()}; append ? out.push(hit) : out.unshift(hit); }
+  for (const x of out) if (x !== hit) x.tags = x.tags.filter(t => !hit.tags.includes(t));
+  return out;
+}
+// Reads the team's sheet copied from Excel / Google Sheets (tab separated), or `aws ecr list-images` output.
+function parseImageSheet(text) {
+  const repos = new Map(); let cur = null, last = null;
+  const repoOf = (name, uri) => { let r = repos.get(name); if (!r) { r = {name, uri: '', raw: []}; repos.set(name, r); } if (uri) r.uri = uri; return r; };
+  const tokRe = /imageDigest"*\s*:\s*"*(sha256:[0-9a-f]{64})|imageTag"*\s*:\s*"+([^"]*)"|repositoryName"*\s*:\s*"+([^"]+)"/gi;
+  for (const line of String(text).split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const cols = line.split('\t').map(c => c.trim().replace(/^"+|"+$/g, '').trim());
+    const toks = [...line.matchAll(tokRe)];
+    if (!toks.length) {
+      if (/repo\s*name|docker\s*image/i.test(line)) continue; // header row
+      const uri = cols.map(c => c.replace(/\s+/g, '')).find(c => IMG_HOST_RE.test(c)) || '';
+      let name = cols.find(c => c && !IMG_HOST_RE.test(c) && IMG_NAME_RE.test(c.toLowerCase()));
+      if (!name && uri) name = uri.replace(/^[^/]+\//, '').replace(/[:@].*$/, '');
+      if (name) { cur = repoOf(name.toLowerCase(), uri); last = null; }
+      continue;
+    }
+    const ni = cols.findIndex(c => /image(Digest|Tag)/i.test(c));
+    const note = ni >= 0 ? cols.slice(ni + 1).filter(Boolean).join(' ').slice(0, 300) : '';
+    for (const m of toks) {
+      if (m[3]) { cur = repoOf(m[3].toLowerCase(), ''); last = null; continue; }
+      if (!cur) continue;
+      if (m[1]) { last = {digest: m[1].toLowerCase(), tags: [], note: ''}; cur.raw.push(last); }
+      else if (m[2] && IMG_TAG_RE.test(m[2])) {
+        if (last && !last.tagged) { last.tags.push(m[2]); last.tagged = true; }
+        else { last = {digest: '', tags: [m[2]], note: '', tagged: true}; cur.raw.push(last); }
+      }
+    }
+    if (note && last) last.note = note;
+  }
+  return [...repos.values()].map(r => ({name: r.name, uri: r.uri,
+    versions: r.raw.reduce((vs, v) => mergeVersion(vs, {digest: v.digest, tags: v.tags, note: v.note}, null, true), [])}));
+}
+async function importImages(parsed) {
+  const now = Date.now(); let nr = 0, nv = 0;
+  const writes = parsed.map(r => {
+    const id = imgId(r.name), ex = S.images.get(id);
+    let vs = ex && Array.isArray(ex.versions) ? ex.versions : [];
+    for (const v of r.versions) {
+      if (!(v.digest && vs.some(x => x.digest === v.digest))) nv++;
+      vs = mergeVersion(vs, v, null, false);
+    }
+    if (!ex) nr++;
+    return [S.db.doc('images/' + id), {name: r.name, uri: r.uri || (ex && ex.uri) || '', versions: vs, updatedBy: S.me, updatedAt: now, ...(ex ? {} : {createdBy: S.me, createdAt: now})}];
+  });
+  for (let i = 0; i < writes.length; i += 400) {
+    const batch = S.db.batch();
+    for (const [ref, data] of writes.slice(i, i + 400)) batch.set(ref, data, {merge: true});
+    await batch.commit();
+  }
+  return {nr, nv};
+}
+function renderImages() {
+  if (!ready()) return;
+  const all = imgRepos(), q = S.imgQ.trim().toLowerCase();
+  const hasQ = v => String(v || '').toLowerCase().includes(q);
+  const shown = all.map(r => {
+    if (!q || hasQ(r.name) || hasQ(r.uri)) return r;
+    const vs = r.versions.filter(v => [v.digest, v.note, ...(v.tags || []), v.pushedBy ? nm(v.pushedBy) : ''].some(hasQ));
+    return vs.length ? {...r, versions: vs} : null;
+  }).filter(Boolean);
+  const nv = all.reduce((n, r) => n + r.versions.length, 0);
+  $('#img-title').textContent = `Docker images · ${all.length} repos · ${nv} versions`;
+  setHTML($('#img-note'), S.admin
+    ? '<div class="note">Only managers push images to the private registry. After each push, add the version here (or paste the sheet into Import) so the team knows what is current. Click a tag to copy its pull address.</div>'
+    : '<div class="note">Only managers can push images to the private registry and change this list. If you need an image pushed, or something here is out of date, ask a manager. Click a tag to copy its pull address.</div>');
+  const nc = S.admin ? 6 : 5;
+  const tagChip = (r, t) => `<button type="button" class="chip accent nodot mono img-chip" data-copy="${esc((r.uri || r.name) + ':' + t)}" title="Copy ${esc((r.uri || r.name) + ':' + t)}">${esc(t)}</button>`;
+  setHTML($('#img-table'), shown.length ? `<table><thead><tr><th>Tags</th><th>Digest</th><th>Commit / what changed</th><th>Pushed on</th><th>Pushed by</th>${S.admin ? '<th></th>' : ''}</tr></thead><tbody>
+    ${shown.map(r => `<tr class="img-repo"><td colspan="${nc}"><div style="display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center">
+        <b class="mono">${esc(r.name)}</b>
+        ${r.uri ? `<button type="button" class="btn small ghost mono" data-copy="${esc(r.uri)}" title="Copy image URI" style="word-break:break-all;text-align:left">${esc(r.uri)}</button>` : '<span class="faint">No image URI</span>'}
+        <span class="faint">${r.versions.length} version${r.versions.length === 1 ? '' : 's'}</span>
+        ${S.admin ? `<span style="margin-left:auto;white-space:nowrap">${btn('img-add', 'Add version', {uid: r.id, id: ''}, null, 'small')} ${btn('img-del', 'Delete repo', {uid: r.id, id: ''}, null, 'small ghost')}</span>` : ''}
+      </div></td></tr>
+      ${r.versions.length ? r.versions.map(v => `<tr${S.imgEdit && S.imgEdit.k === v.k ? ' class="img-editing"' : ''}>
+        <td>${(v.tags || []).length ? v.tags.map(t => tagChip(r, t)).join('') : '<span class="chip nodot">untagged</span>'}</td>
+        <td>${v.digest ? `<button type="button" class="btn small ghost mono" data-copy="${esc(v.digest)}" title="${esc(v.digest)} (click to copy)">${esc(v.digest.slice(7, 19))}…</button>` : '<span class="faint">—</span>'}</td>
+        <td>${v.note ? esc(v.note) : '<span class="faint">—</span>'}</td>
+        <td class="mono" style="white-space:nowrap">${v.pushedAt ? esc(fmtDay(v.pushedAt)) + ' ' + esc(v.pushedAt.slice(0, 4)) : '<span class="faint">—</span>'}</td>
+        <td>${v.pushedBy ? esc(nm(v.pushedBy)) : '<span class="faint">—</span>'}</td>
+        ${S.admin ? `<td style="text-align:right;white-space:nowrap">${btn('img-edit', 'Edit', {uid: r.id, id: v.k}, null, 'small')} ${btn('img-ver-del', 'Delete', {uid: r.id, id: v.k}, null, 'small ghost')}</td>` : ''}</tr>`).join('')
+        : `<tr><td colspan="${nc}" class="faint">No versions recorded yet.</td></tr>`}`).join('')}
+    </tbody></table>` : `<div class="empty">${q ? 'Nothing matches that search.' : 'No images on the list yet.' + (S.admin ? ' Add a version or import your sheet below.' : '')}</div>`);
+  if (S.admin) {
+    const sel = $('#img-by');
+    const opts = '<option value="">Not recorded</option>' + people().map(id => `<option value="${esc(id)}">${esc(nm(id))}${id === S.me ? ' (you)' : ''}</option>`).join('');
+    if (sel._h !== opts) { const v = sel._h ? sel.value : S.me; sel.innerHTML = opts; sel._h = opts; if ([...sel.options].some(o => o.value === v)) sel.value = v; }
+    setHTML($('#img-repos'), all.map(r => `<option value="${esc(r.name)}"></option>`).join(''));
+    const editing = !!S.imgEdit;
+    $('#img-form-title').textContent = editing ? 'Update a version' : 'Add a version';
+    $('#img-submit').textContent = editing ? 'Save changes' : 'Add version';
+    $('#img-cancel').hidden = !editing;
+    $('#img-repo').readOnly = editing;
+  }
+}
+function resetImgForm() {
+  S.imgEdit = null;
+  for (const f of ['img-repo', 'img-uri', 'img-tags', 'img-digest', 'img-note']) $('#' + f).value = '';
+  $('#img-date').value = todayKey(); $('#img-by').value = S.me || '';
+}
+function renderImport() {
+  const p = S.imgParsed = parseImageSheet($('#imp-text').value);
+  const vs = p.reduce((n, r) => n + r.versions.length, 0);
+  const newR = p.filter(r => !S.images.has(imgId(r.name))).length;
+  const newV = p.reduce((n, r) => { const ex = (S.images.get(imgId(r.name)) || {}).versions || []; return n + r.versions.filter(v => !(v.digest && ex.some(x => x.digest === v.digest))).length; }, 0);
+  $('#imp-sum').textContent = $('#imp-text').value.trim() ? (p.length ? `Found ${p.length} repo${p.length === 1 ? '' : 's'} and ${vs} version${vs === 1 ? '' : 's'}. New: ${newR} repo${newR === 1 ? '' : 's'}, ${newV} version${newV === 1 ? '' : 's'}.` : 'No repos found in that text.') : '';
+  $('#imp-go').disabled = !p.length || !canAct();
+}
 function updateForms() {
   const on = canAct();
   for (const id of ['apply-fs', 'task-fs', 'settings-fs', 'entry-fs']) $('#' + id).disabled = !on;
@@ -2017,6 +2196,8 @@ function updateForms() {
   const wh = wo.length ? `<b>Team rule: 1 work-from-home day per week.</b> This would make ${wo.map(o => `${o.n} WFH days in the week of ${esc(fmtShort(o.w))}`).join(', ')}. You can still send it, but your manager will see it flagged.` : '';
   if (wb._h !== wh) { wb.innerHTML = wh; wb._h = wh; }
   $('#ev-fs').disabled = !on;
+  $('#img-fs').disabled = !on;
+  $('#imp-fs').disabled = !on;
 }
 function $$(s) { return [...document.querySelectorAll(s)]; }
 
@@ -2200,6 +2381,7 @@ function subscribeCore() {
     renderAll();
   }, onErr);
   S.db.collection('events').onSnapshot(s => { S.events = new Map(s.docs.map(d => [d.id, d.data()])); renderAll(); }, onErr);
+  S.db.collection('images').onSnapshot(s => { S.images = new Map(s.docs.map(d => [d.id, d.data()])); if (S.imgEdit && !S.images.has(S.imgEdit.id)) resetImgForm(); renderAll(); }, onErr);
   if (S.admin) S.db.doc('invites/list').onSnapshot(s => { S.invites = s.exists ? s.data() : null; maybeImport(); renderAll(); }, onErr);
 }
 
@@ -2321,8 +2503,22 @@ document.addEventListener('click', e => {
     guard(() => tdoc(uid, id).update({updates: firebase.firestore.FieldValue.arrayUnion({at, by: S.me, health, text}), updatedAt: at}), 'Update posted')
       .then(ok => { if (ok) { S.updOpen = null; if (S.updDraft) S.updDraft[key] = null; renderAll(); } });
   }
+  else if (act === 'img-edit' || act === 'img-add') {
+    if (!S.admin) return;
+    const r = S.images.get(uid); if (!r) return;
+    resetImgForm();
+    $('#img-repo').value = r.name; $('#img-uri').value = r.uri || '';
+    const v = act === 'img-edit' ? (r.versions || []).find(x => x.k === id) : null;
+    if (v) {
+      S.imgEdit = {id: uid, k: id};
+      $('#img-tags').value = (v.tags || []).join(', '); $('#img-digest').value = v.digest || ''; $('#img-note').value = v.note || '';
+      $('#img-date').value = v.pushedAt || ''; $('#img-by').value = v.pushedBy || '';
+    }
+    renderAll();
+    $('#img-form').scrollIntoView({block: 'center', behavior: 'smooth'}); $('#img-tags').focus({preventScroll: true});
+  }
   else if (act === 'task-status') guard(() => tdoc(uid, id).update({status, updatedAt: Date.now(), doneAt: status === 'done' ? Date.now() : null}), status === 'done' ? 'Marked done' : 'Task updated');
-  else if (act === 'task-del' || act === 'remove' || act === 'req-cancel' || act === 'ev-del') {
+  else if (act === 'task-del' || act === 'remove' || act === 'req-cancel' || act === 'ev-del' || act === 'img-del' || act === 'img-ver-del') {
     if (b.dataset.armed !== '1') {
       b.dataset.armed = '1'; b.classList.add('armed'); const old = b.textContent; b.textContent = 'Click again to confirm';
       setTimeout(() => { if (b.isConnected) { b.dataset.armed = ''; b.classList.remove('armed'); b.textContent = old; } }, 3500);
@@ -2330,6 +2526,15 @@ document.addEventListener('click', e => {
     }
     if (act === 'task-del') guard(() => tdoc(uid, id).delete(), 'Task deleted');
     else if (act === 'ev-del') guard(() => S.db.doc('events/' + id).delete(), 'Activity deleted');
+    else if (act === 'img-del') { if (S.imgEdit && S.imgEdit.id === uid) resetImgForm(); guard(() => S.db.doc('images/' + uid).delete(), 'Repo removed from the list'); }
+    else if (act === 'img-ver-del') {
+      if (S.imgEdit && S.imgEdit.k === id) resetImgForm();
+      guard(() => S.db.runTransaction(async tx => {
+        const ref = S.db.doc('images/' + uid), snap = await tx.get(ref);
+        if (!snap.exists) return;
+        tx.update(ref, {versions: (snap.data().versions || []).filter(x => x.k !== id), updatedBy: S.me, updatedAt: Date.now()});
+      }), 'Version removed from the list');
+    }
     else if (act === 'remove') guard(async () => {
       const em = TD.emailOf[uid] || '';
       await S.db.doc('people/' + uid).set({removed: true, removedBy: S.me, ...(em ? {email: em} : {})}, {merge: true});
@@ -2531,7 +2736,50 @@ $('#ev-form').addEventListener('submit', async e => {
   const ok = await guard(() => S.db.collection('events').add({date, title: title.slice(0, 80), notes: $('#ev-notes').value.trim().slice(0, 200), attendees, createdBy: S.me, createdAt: Date.now()}), 'Activity saved');
   if (ok) { $('#ev-title').value = ''; $('#ev-notes').value = ''; S.bdYear = Number(date.slice(0, 4)); }
 });
-$('#sp-period').addEventListener('change', renderAll);
+$('#img-q').addEventListener('input', e => { S.imgQ = e.target.value; renderAll(); });
+$('#img-cancel').addEventListener('click', () => { resetImgForm(); renderAll(); });
+$('#img-repo').addEventListener('change', () => {
+  const r = S.images.get(imgId($('#img-repo').value.trim().toLowerCase()));
+  if (r && r.uri && !$('#img-uri').value) $('#img-uri').value = r.uri;
+});
+$('#img-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!canAct() || !S.admin) return;
+  const name = $('#img-repo').value.trim().toLowerCase().replace(/\s+/g, '').replace(/^[^/]+\.[^/]+\//, '');
+  const uri = $('#img-uri').value.trim().replace(/\s+/g, '').replace(/:[\w.-]+$/, '');
+  const tags = [...new Set($('#img-tags').value.split(/[\s,]+/).map(t => t.replace(/^:/, '')).filter(Boolean))];
+  let digest = $('#img-digest').value.trim().toLowerCase();
+  if (digest && !digest.startsWith('sha256:')) digest = 'sha256:' + digest;
+  if (!IMG_NAME_RE.test(name)) { toast('Enter the repo name, for example bi/rnaseq.', true); $('#img-repo').focus(); return; }
+  if (uri && !IMG_HOST_RE.test(uri)) { toast('The image URI should look like registry-host/repo, for example 123456789012.dkr.ecr.ap-south-1.amazonaws.com/bi/rnaseq.', true); $('#img-uri').focus(); return; }
+  const bad = tags.find(t => !IMG_TAG_RE.test(t));
+  if (bad) { toast(`"${bad}" isn't a valid tag. Tags use letters, numbers, dots, dashes and underscores.`, true); $('#img-tags').focus(); return; }
+  if (digest && !/^sha256:[0-9a-f]{64}$/.test(digest)) { toast('The digest should be sha256: followed by 64 letters and numbers.', true); $('#img-digest').focus(); return; }
+  if (!tags.length && !digest) { toast('Enter at least one tag.', true); $('#img-tags').focus(); return; }
+  const v = {tags, digest, note: $('#img-note').value.trim().slice(0, 300), pushedAt: $('#img-date').value || '', pushedBy: $('#img-by').value || ''};
+  const ed = S.imgEdit, id = ed ? ed.id : imgId(name);
+  const ok = await guard(() => S.db.runTransaction(async tx => {
+    const ref = S.db.doc('images/' + id), snap = await tx.get(ref), cur = snap.exists ? snap.data() : null, now = Date.now();
+    const versions = mergeVersion(cur && Array.isArray(cur.versions) ? cur.versions : [], v, ed ? ed.k : null, false);
+    tx.set(ref, {name: cur ? cur.name : name, uri: uri || (cur && cur.uri) || '', versions, updatedBy: S.me, updatedAt: now, ...(cur ? {} : {createdBy: S.me, createdAt: now})}, {merge: true});
+  }), ed ? 'Version updated' : `${name}:${tags[0] || digest.slice(7, 19)} added`);
+  if (ok) { resetImgForm(); renderAll(); }
+});
+$('#imp-text').addEventListener('input', renderImport);
+$('#imp-go').addEventListener('click', async () => {
+  if (!canAct() || !S.admin || !S.imgParsed.length) return;
+  let res = null;
+  const ok = await guard(async () => { res = await importImages(S.imgParsed); });
+  if (ok && res) { toast(`Imported. ${res.nr} new repo${res.nr === 1 ? '' : 's'}, ${res.nv} new version${res.nv === 1 ? '' : 's'}.`); $('#imp-text').value = ''; renderImport(); }
+});
+// Copy an image URI, pull address (uri:tag) or digest. Works for everyone, including read-only viewers.
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-copy]');
+  if (!b) return;
+  try { await navigator.clipboard.writeText(b.dataset.copy); toast('Copied ' + b.dataset.copy); }
+  catch (err) { toast("Couldn't copy here. Select the text from the tooltip instead.", true); }
+});
+$('#sp-period').addEventListener('change', renderAll);$('#sp-period').addEventListener('change', renderAll);
 $('#ts-person').addEventListener('change', e => { S.ts.person = e.target.value; S.regForm = null; renderAll(); });
 $('#ts-month').addEventListener('change', e => { if (e.target.value) { S.ts.month = e.target.value; S.regForm = null; renderAll(); } });
 // keep what's typed in the regularize form, so a live update re-rendering the table doesn't lose it
@@ -2586,7 +2834,7 @@ $('#add-form').addEventListener('submit', e => {
 });
 
 /* ---------- routing ---------- */
-const VIEWS = ['calendar', 'today', 'leave', 'tasks', 'timesheet', 'team', 'bonding', 'stats'];
+const VIEWS = ['calendar', 'today', 'leave', 'tasks', 'timesheet', 'team', 'bonding', 'images', 'stats'];
 const MANAGER_VIEWS = ['stats'];
 function route() {
   const h = location.hash.slice(1);
@@ -2602,7 +2850,7 @@ async function boot() {
   route();
   $('#ap-from').value = todayKey(); $('#ap-to').value = todayKey(); $('#ap-to').min = todayKey();
   $('#st-allow').value = S.settings.allowance; $('#st-carry').value = carryMax(); $('#st-hours').value = S.settings.hours; $('#st-max').value = S.settings.maxAway; $('#st-anchor').value = '2026-11-21';
-  $('#en-from').value = todayKey(); $('#en-to').value = todayKey(); $('#ev-date').value = todayKey();
+  $('#en-from').value = todayKey(); $('#en-to').value = todayKey(); $('#ev-date').value = todayKey(); $('#img-date').value = todayKey();
   renderAll();
   setInterval(renderAll, 30000);
   const c = window.claude;
