@@ -642,8 +642,9 @@ body.signed-out .tabs,body.signed-out main.wrap,body.signed-out #signout{display
       <div class="card admin-only">
         <div class="card-head"><h2>Import from a sheet</h2></div>
         <fieldset class="fs" id="imp-fs">
-          <p class="muted" style="margin:0 0 8px">Select the rows in your sheet (Repo Name, Docker Image Name, Versions, Commit), copy, and paste here. Output of <span class="mono">aws ecr list-images</span> works too, with the repo name on the line above it. Importing adds and updates; it never deletes.</p>
+          <p class="muted" style="margin:0 0 8px">Select the rows in your sheet (Repo Name, Docker Image Name, Versions, Commit), copy, and paste here. Output of <span class="mono">aws ecr list-images</span> works too, with the repo name on the line above it. Importing adds and updates; it never deletes, unless you tick Replace.</p>
           <textarea id="imp-text" rows="8" class="mono" spellcheck="false" placeholder="Paste here" style="font-size:12px"></textarea>
+          <label class="check" style="margin-top:8px"><input type="checkbox" id="imp-replace"> Replace the whole list with this paste (repos and versions not in it are removed)</label>
           <div class="form-foot"><span class="muted" id="imp-sum"></span><button class="btn primary" type="button" id="imp-go" disabled>Import</button></div>
         </fieldset>
       </div>
@@ -2090,24 +2091,33 @@ function parseImageSheet(text) {
   return [...repos.values()].map(r => ({name: r.name, uri: r.uri,
     versions: r.raw.reduce((vs, v) => mergeVersion(vs, {digest: v.digest, tags: v.tags, note: v.note}, null, true), [])}));
 }
-async function importImages(parsed) {
+async function importImages(parsed, replace) {
+  // replace: the list becomes exactly what was pasted. Repos and versions not in the paste are removed; a version
+  // that is still there keeps its push date, pushed-by and (when the paste has none) its commit note.
   const now = Date.now(); let nr = 0, nv = 0;
   const writes = parsed.map(r => {
-    const id = imgId(r.name), ex = S.images.get(id);
-    let vs = ex && Array.isArray(ex.versions) ? ex.versions : [];
+    const id = imgId(r.name), ex = S.images.get(id), old = ex && Array.isArray(ex.versions) ? ex.versions : [];
+    let vs = replace ? [] : old;
     for (const v of r.versions) {
-      if (!(v.digest && vs.some(x => x.digest === v.digest))) nv++;
-      vs = mergeVersion(vs, v, null, false);
+      const prev = v.digest ? old.find(x => x.digest === v.digest) : null;
+      if (!prev) nv++;
+      const nv2 = replace && prev ? {...v, note: v.note || prev.note || '', pushedAt: prev.pushedAt || '', pushedBy: prev.pushedBy || ''} : v;
+      vs = mergeVersion(vs, nv2, null, false);
+      if (replace && prev) { const hit = vs.find(x => x.digest === v.digest); if (hit) hit.k = prev.k || hit.k; }
     }
     if (!ex) nr++;
-    return [S.db.doc('images/' + id), {name: r.name, uri: r.uri || (ex && ex.uri) || '', versions: vs, updatedBy: S.me, updatedAt: now, ...(ex ? {} : {createdBy: S.me, createdAt: now})}];
+    return ['set', S.db.doc('images/' + id), {name: r.name, uri: r.uri || (ex && ex.uri) || '', versions: vs, updatedBy: S.me, updatedAt: now,
+      ...(ex ? {createdBy: ex.createdBy || S.me, createdAt: ex.createdAt || now} : {createdBy: S.me, createdAt: now})}];
   });
+  const keep = new Set(parsed.map(r => imgId(r.name)));
+  const gone = replace ? [...S.images.keys()].filter(id => !keep.has(id)) : [];
+  for (const id of gone) writes.push(['del', S.db.doc('images/' + id)]);
   for (let i = 0; i < writes.length; i += 400) {
     const batch = S.db.batch();
-    for (const [ref, data] of writes.slice(i, i + 400)) batch.set(ref, data, {merge: true});
+    for (const [op, ref, data] of writes.slice(i, i + 400)) op === 'del' ? batch.delete(ref) : batch.set(ref, data, replace ? undefined : {merge: true});
     await batch.commit();
   }
-  return {nr, nv};
+  return {nr, nv, removed: gone.length};
 }
 function renderImages() {
   if (!ready()) return;
@@ -2163,8 +2173,12 @@ function renderImport() {
   const vs = p.reduce((n, r) => n + r.versions.length, 0);
   const newR = p.filter(r => !S.images.has(imgId(r.name))).length;
   const newV = p.reduce((n, r) => { const ex = (S.images.get(imgId(r.name)) || {}).versions || []; return n + r.versions.filter(v => !(v.digest && ex.some(x => x.digest === v.digest))).length; }, 0);
-  $('#imp-sum').textContent = $('#imp-text').value.trim() ? (p.length ? `Found ${p.length} repo${p.length === 1 ? '' : 's'} and ${vs} version${vs === 1 ? '' : 's'}. New: ${newR} repo${newR === 1 ? '' : 's'}, ${newV} version${newV === 1 ? '' : 's'}.` : 'No repos found in that text.') : '';
-  $('#imp-go').disabled = !p.length || !canAct();
+  const rp = $('#imp-replace').checked, keep = new Set(p.map(r => imgId(r.name)));
+  const goneR = rp ? [...S.images.keys()].filter(id => !keep.has(id)).length : 0;
+  $('#imp-sum').textContent = $('#imp-text').value.trim() ? (p.length ? `Found ${p.length} repo${p.length === 1 ? '' : 's'} and ${vs} version${vs === 1 ? '' : 's'}. New: ${newR} repo${newR === 1 ? '' : 's'}, ${newV} version${newV === 1 ? '' : 's'}.${rp ? ` Removes ${goneR} repo${goneR === 1 ? '' : 's'} not in the paste.` : ''}` : 'No repos found in that text.') : '';
+  const b = $('#imp-go');
+  b.disabled = !p.length || !canAct();
+  if (b.dataset.armed !== '1') b.textContent = rp ? 'Replace list' : 'Import';
 }
 function updateForms() {
   const on = canAct();
@@ -2766,11 +2780,22 @@ $('#img-form').addEventListener('submit', async e => {
   if (ok) { resetImgForm(); renderAll(); }
 });
 $('#imp-text').addEventListener('input', renderImport);
+$('#imp-replace').addEventListener('change', renderImport);
 $('#imp-go').addEventListener('click', async () => {
   if (!canAct() || !S.admin || !S.imgParsed.length) return;
+  const b = $('#imp-go'), replace = $('#imp-replace').checked;
+  if (replace && b.dataset.armed !== '1') {
+    b.dataset.armed = '1'; b.classList.add('armed'); b.textContent = 'Click again to replace';
+    setTimeout(() => { if (b.dataset.armed === '1') { b.dataset.armed = ''; b.classList.remove('armed'); renderImport(); } }, 3500);
+    return;
+  }
+  b.dataset.armed = ''; b.classList.remove('armed');
   let res = null;
-  const ok = await guard(async () => { res = await importImages(S.imgParsed); });
-  if (ok && res) { toast(`Imported. ${res.nr} new repo${res.nr === 1 ? '' : 's'}, ${res.nv} new version${res.nv === 1 ? '' : 's'}.`); $('#imp-text').value = ''; renderImport(); }
+  const ok = await guard(async () => { res = await importImages(S.imgParsed, replace); });
+  if (ok && res) {
+    toast(`${replace ? 'List replaced' : 'Imported'}. ${res.nr} new repo${res.nr === 1 ? '' : 's'}, ${res.nv} new version${res.nv === 1 ? '' : 's'}${res.removed ? `, ${res.removed} repo${res.removed === 1 ? '' : 's'} removed` : ''}.`);
+    $('#imp-text').value = ''; $('#imp-replace').checked = false; renderImport();
+  }
 });
 // Copy an image URI, pull address (uri:tag) or digest. Works for everyone, including read-only viewers.
 document.addEventListener('click', async e => {
